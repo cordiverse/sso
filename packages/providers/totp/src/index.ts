@@ -1,14 +1,15 @@
 import { Context } from 'cordis'
 import { createHmac, randomBytes } from 'node:crypto'
-import type { Sso, SsoProvider } from '@cordisjs/plugin-sso'
+import type {} from 'minato'
+import type { SsoProvider } from '@cordisjs/plugin-sso'
 
 declare module 'minato' {
   interface Tables {
-    sso_totp: SSOTOTP
+    sso_totp: SsoTotp
   }
 }
 
-export interface SSOTOTP {
+export interface SsoTotp {
   identityId: number
   secret: string
   label?: string

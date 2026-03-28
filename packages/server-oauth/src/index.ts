@@ -1,7 +1,9 @@
 import { Context } from 'cordis'
 import { Random } from 'cosmokit'
+import type {} from 'minato'
 import { createHash } from 'node:crypto'
 import type { Sso } from '@cordisjs/plugin-sso'
+import type {} from '@cordisjs/plugin-server'
 
 declare module 'minato' {
   interface Tables {

@@ -1,13 +1,14 @@
 import { Context } from 'cordis'
 import type { Sso } from '@cordisjs/plugin-sso'
+import type {} from '@cordisjs/plugin-server'
 
 declare module 'cordis' {
   interface Context {
-    'sso.server': SSOServer
+    'sso.server': SsoServer
   }
 }
 
-export interface SSOServer {
+export interface SsoServer {
   route(method: 'get' | 'post' | 'put' | 'delete', path: string, handler: RouteHandler): void
 }
 
@@ -33,7 +34,7 @@ export function apply(ctx: Context) {
   const sso: Sso = ctx.sso
 
   // Provide sso.server sub-service
-  const server: SSOServer = {
+  const server: SsoServer = {
     route(method, path, handler) {
       const fullPath = `/sso${path}`
       ctx.server[method](fullPath, async (koa) => {

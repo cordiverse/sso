@@ -1,15 +1,16 @@
 import { Context } from 'cordis'
 import { Random } from 'cosmokit'
-import type { Sso, SsoProvider } from '@cordisjs/plugin-sso'
+import type {} from 'minato'
+import type { SsoProvider } from '@cordisjs/plugin-sso'
 import type {} from '@cordisjs/sms'
 
 declare module 'minato' {
   interface Tables {
-    sso_sms: SSOSms
+    sso_sms: SsoSms
   }
 }
 
-export interface SSOSms {
+export interface SsoSms {
   identityId: number
   phone: string
   verified: boolean

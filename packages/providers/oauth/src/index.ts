@@ -1,5 +1,6 @@
 import { Context } from 'cordis'
-import type { Sso, SsoProvider } from '@cordisjs/plugin-sso'
+import type { SsoProvider } from '@cordisjs/plugin-sso'
+import type {} from 'minato'
 
 declare module 'minato' {
   interface Tables {

@@ -9,11 +9,12 @@
     "lib"
   ],
   "peerDependencies": {
-    "@cordisjs/plugin-server": "^3.0.0",
+    "@cordisjs/plugin-server": "^1.2.0",
     "@cordisjs/plugin-sso": "^0.1.0",
     "cordis": "^4.0.0-rc.0"
   },
   "devDependencies": {
+    "@cordisjs/plugin-server": "^1.2.0",
     "@cordisjs/plugin-sso": "^0.1.0",
     "cordis": "^4.0.0-rc.0"
   }

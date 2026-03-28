@@ -1,14 +1,15 @@
 import { Context } from 'cordis'
 import { createPrivateKey, createSign } from 'node:crypto'
 import type { SsoProvider } from '@cordisjs/plugin-sso'
+import type {} from 'minato'
 
 declare module 'minato' {
   interface Tables {
-    sso_apple: SSOApple
+    sso_apple: SsoApple
   }
 }
 
-export interface SSOApple {
+export interface SsoApple {
   identityId: number
   sub: string // Apple's unique user identifier
   email?: string

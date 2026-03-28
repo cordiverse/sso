@@ -1,31 +1,32 @@
 import { Context } from 'cordis'
 import { randomBytes } from 'node:crypto'
 import {
-  generateRegistrationOptions,
-  verifyRegistrationResponse,
   generateAuthenticationOptions,
+  generateRegistrationOptions,
   verifyAuthenticationResponse,
+  verifyRegistrationResponse,
   type WebAuthnCredential,
   type RegistrationResponseJSON,
   type AuthenticationResponseJSON,
 } from '@simplewebauthn/server'
-import type { Sso, SsoProvider } from '@cordisjs/plugin-sso'
+import type { SsoProvider } from '@cordisjs/plugin-sso'
+import type {} from 'minato'
 
 declare module 'minato' {
   interface Tables {
-    sso_webauthn: SSOWebAuthn
+    sso_webauthn: SsoWebAuthn
   }
 }
 
-export interface SSOWebAuthn {
+export interface SsoWebAuthn {
   identityId: number
   credentialId: string
-  publicKey: string        // base64-encoded
+  publicKey: string // base64-encoded
   signCount: number
-  deviceType: string       // 'singleDevice' | 'multiDevice'
+  deviceType: string // 'singleDevice' | 'multiDevice'
   backedUp: boolean
   deviceName?: string
-  transports?: string      // JSON array
+  transports?: string // JSON array
   createdAt: Date
   lastUsedAt?: Date
 }

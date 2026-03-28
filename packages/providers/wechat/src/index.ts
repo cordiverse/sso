@@ -1,13 +1,14 @@
 import { Context } from 'cordis'
-import type { Sso, SsoProvider } from '@cordisjs/plugin-sso'
+import type { SsoProvider } from '@cordisjs/plugin-sso'
+import type {} from 'minato'
 
 declare module 'minato' {
   interface Tables {
-    sso_wechat: SSOWeChat
+    sso_wechat: SsoWeChat
   }
 }
 
-export interface SSOWeChat {
+export interface SsoWeChat {
   identityId: number
   openId: string
   unionId?: string

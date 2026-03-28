@@ -1,14 +1,15 @@
 import { Context } from 'cordis'
 import { createHash, randomBytes } from 'node:crypto'
 import type { Sso, SsoProvider } from '@cordisjs/plugin-sso'
+import type {} from 'minato'
 
 declare module 'minato' {
   interface Tables {
-    sso_password: SSOPassword
+    sso_password: SsoPassword
   }
 }
 
-export interface SSOPassword {
+export interface SsoPassword {
   identityId: number
   username: string
   hash: string

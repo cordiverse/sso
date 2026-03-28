@@ -1,13 +1,14 @@
 import { Context } from 'cordis'
 import type { Sso, SsoProvider } from '@cordisjs/plugin-sso'
+import type {} from 'minato'
 
 declare module 'minato' {
   interface Tables {
-    sso_qq: SSOQQ
+    sso_qq: SsoQq
   }
 }
 
-export interface SSOQQ {
+export interface SsoQq {
   identityId: number
   openId: string
   unionId?: string
