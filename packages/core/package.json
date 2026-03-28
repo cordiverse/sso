@@ -27,18 +27,28 @@
   "homepage": "https://github.com/cordiverse/sso",
   "author": "Shigma <shigma10826@gmail.com>",
   "license": "MIT",
+  "cordis": {
+    "services": {
+      "implements": [
+        "sso"
+      ],
+      "required": [
+        "database"
+      ]
+    }
+  },
   "peerDependencies": {
-    "cordis": "^3.18.1",
-    "minato": "^3.6.0"
+    "cordis": "^4.0.0-rc.0",
+    "minato": "^4.0.0-alpha.0"
   },
   "devDependencies": {
-    "@types/chai": "^4.3.16",
-    "@types/node": "^22.7.8",
-    "chai": "^5.1.1",
-    "cordis": "^3.18.1",
-    "minato": "^3.6.0"
+    "@types/chai": "^5.2.3",
+    "@types/node": "^25.3.5",
+    "chai": "^5.3.3",
+    "cordis": "^4.0.0-rc.0",
+    "minato": "^4.0.0-alpha.0"
   },
   "dependencies": {
-    "cosmokit": "^1.6.3"
+    "cosmokit": "^1.8.1"
   }
 }

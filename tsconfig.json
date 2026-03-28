@@ -1,10 +1,9 @@
 {
   "extends": "./tsconfig.base",
   "compilerOptions": {
-    "baseUrl": ".",
     "paths": {
-      "@cordisjs/plugin-sso": ["packages/core/src"],
-      "@cordisjs/plugin-sso-*": ["packages/*/src"],
+      "@cordisjs/plugin-sso": ["./packages/core/src"],
+      "@cordisjs/plugin-sso-*": ["./packages/*/src"],
     },
   },
   "files": [],
