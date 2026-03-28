@@ -1,0 +1,19 @@
+{
+  "name": "@cordisjs/plugin-sso-mail",
+  "version": "0.1.0",
+  "description": "Email OTP provider for SSO",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "files": ["src"],
+  "peerDependencies": {
+    "@cordisjs/plugin-sso": "^0.1.0",
+    "cordis": "^4.0.0-rc.0",
+    "minato": "^4.0.0-alpha.0"
+  },
+  "devDependencies": {
+    "@cordisjs/plugin-sso": "^0.1.0",
+    "cordis": "^4.0.0-rc.0",
+    "minato": "^4.0.0-alpha.0"
+  }
+}

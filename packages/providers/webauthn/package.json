@@ -1,0 +1,22 @@
+{
+  "name": "@cordisjs/plugin-sso-webauthn",
+  "version": "0.1.0",
+  "description": "WebAuthn/FIDO2 device authentication provider for SSO",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "files": ["src"],
+  "peerDependencies": {
+    "@cordisjs/plugin-sso": "^0.1.0",
+    "cordis": "^4.0.0-rc.0",
+    "minato": "^4.0.0-alpha.0"
+  },
+  "dependencies": {
+    "@simplewebauthn/server": "^13.3.0"
+  },
+  "devDependencies": {
+    "@cordisjs/plugin-sso": "^0.1.0",
+    "cordis": "^4.0.0-rc.0",
+    "minato": "^4.0.0-alpha.0"
+  }
+}

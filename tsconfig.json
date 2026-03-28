@@ -2,8 +2,14 @@
   "extends": "./tsconfig.base",
   "compilerOptions": {
     "paths": {
+      "@cordisjs/sms": ["./packages/sms/core/src"],
       "@cordisjs/plugin-sso": ["./packages/core/src"],
-      "@cordisjs/plugin-sso-*": ["./packages/*/src"],
+      "@cordisjs/plugin-sso-*": [
+        "./packages/*/src",
+        "./packages/providers/*/src",
+      ],
+      "@cordisjs/plugin-sms-*": ["./packages/sms/*/src"],
+      "@cordisjs/plugin-*": ["./packages/*/src"],
     },
   },
   "files": [],

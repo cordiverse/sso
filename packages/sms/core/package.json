@@ -1,0 +1,15 @@
+{
+  "name": "@cordisjs/sms",
+  "version": "0.1.0",
+  "description": "Abstract SMS Service for Cordis",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "files": ["src"],
+  "peerDependencies": {
+    "cordis": "^4.0.0-rc.0"
+  },
+  "devDependencies": {
+    "cordis": "^4.0.0-rc.0"
+  }
+}

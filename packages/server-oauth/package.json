@@ -1,0 +1,25 @@
+{
+  "name": "@cordisjs/plugin-server-oauth",
+  "version": "0.1.0",
+  "description": "OAuth 2.0 Authorization Server for Cordis",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "files": [
+    "src"
+  ],
+  "peerDependencies": {
+    "@cordisjs/plugin-server": "^3.0.0",
+    "@cordisjs/plugin-sso": "^0.1.0",
+    "cordis": "^4.0.0-rc.0",
+    "minato": "^4.0.0-alpha.0"
+  },
+  "devDependencies": {
+    "@cordisjs/plugin-sso": "^0.1.0",
+    "cordis": "^4.0.0-rc.0",
+    "minato": "^4.0.0-alpha.0"
+  },
+  "dependencies": {
+    "cosmokit": "^1.8.1"
+  }
+}
