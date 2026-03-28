@@ -1,5 +1,5 @@
 import { Context } from 'cordis'
-import type { SSO, SSOProvider } from '@cordisjs/plugin-sso'
+import type { Sso, SsoProvider } from '@cordisjs/plugin-sso'
 
 declare module 'minato' {
   interface Tables {
@@ -325,7 +325,7 @@ export function apply(ctx: Context, config: Config) {
   const scope = config.scope ?? preset.defaultScope
 
   // Extend table (only once, shared across all OAuth providers)
-  ctx.minato.extend('sso_oauth', {
+  ctx.model.extend('sso_oauth', {
     identityId: 'unsigned(8)',
     provider: 'string(255)',
     externalId: 'string(255)',
@@ -392,7 +392,7 @@ export function apply(ctx: Context, config: Config) {
     return res.json()
   }
 
-  const provider: SSOProvider = {
+  const provider: SsoProvider = {
     name: providerName,
     interactive: true,
     autoRegister: true,
@@ -426,13 +426,13 @@ export function apply(ctx: Context, config: Config) {
       const userInfoData = await fetchUserInfo(accessToken)
       const userInfo = preset.extractUser(userInfoData)
 
-      const [existing] = await ctx.minato.get('sso_oauth', {
+      const [existing] = await ctx.model.get('sso_oauth', {
         provider: providerName,
         externalId: userInfo.externalId,
       })
 
       if (existing) {
-        await ctx.minato.set('sso_oauth', { identityId: existing.identityId }, {
+        await ctx.model.set('sso_oauth', { identityId: existing.identityId }, {
           accessToken,
           refreshToken: tokenData.refresh_token ?? existing.refreshToken,
           displayName: userInfo.displayName,
@@ -462,7 +462,7 @@ export function apply(ctx: Context, config: Config) {
       const userInfoData = await fetchUserInfo(accessToken)
       const userInfo = preset.extractUser(userInfoData)
 
-      await ctx.minato.create('sso_oauth', {
+      await ctx.model.create('sso_oauth', {
         identityId,
         provider: providerName,
         externalId: userInfo.externalId,

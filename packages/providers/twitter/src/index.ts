@@ -1,6 +1,6 @@
 import { Context } from 'cordis'
 import { createHash, randomBytes } from 'node:crypto'
-import type { SSO, SSOProvider } from '@cordisjs/plugin-sso'
+import type { Sso, SsoProvider } from '@cordisjs/plugin-sso'
 
 declare module 'minato' {
   interface Tables {
@@ -38,7 +38,7 @@ interface PKCEChallenge {
 export function apply(ctx: Context, config: Config) {
   const challenges = new Map<string, PKCEChallenge>()
 
-  ctx.minato.extend('sso_twitter', {
+  ctx.model.extend('sso_twitter', {
     identityId: 'unsigned(8)',
     twitterId: 'string(255)',
     username: 'string(255)',
@@ -60,7 +60,7 @@ export function apply(ctx: Context, config: Config) {
     return { codeVerifier, codeChallenge }
   }
 
-  const provider: SSOProvider = {
+  const provider: SsoProvider = {
     name: 'twitter',
     interactive: true,
     autoRegister: true,
@@ -127,9 +127,9 @@ export function apply(ctx: Context, config: Config) {
       const userData = await userRes.json() as any
       const user = userData.data
 
-      const [existing] = await ctx.minato.get('sso_twitter', { twitterId: user.id })
+      const [existing] = await ctx.model.get('sso_twitter', { twitterId: user.id })
       if (existing) {
-        await ctx.minato.set('sso_twitter', { identityId: existing.identityId }, {
+        await ctx.model.set('sso_twitter', { identityId: existing.identityId }, {
           accessToken: access_token,
           refreshToken: refresh_token,
           username: user.username,
@@ -174,7 +174,7 @@ export function apply(ctx: Context, config: Config) {
       const userData = await userRes.json() as any
       const user = userData.data
 
-      await ctx.minato.create('sso_twitter', {
+      await ctx.model.create('sso_twitter', {
         identityId,
         twitterId: user.id,
         username: user.username,

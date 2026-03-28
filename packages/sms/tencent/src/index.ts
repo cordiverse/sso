@@ -43,7 +43,6 @@ export class TencentSmsService extends SmsService {
       PhoneNumberSet: [phoneNumber],
     })
 
-    const hashedPayload = createHmac('sha256', '').update(payload).copy().digest('hex')
     // Actually need SHA256 hash, not HMAC
     const { createHash } = await import('node:crypto')
     const payloadHash = createHash('sha256').update(payload).digest('hex')

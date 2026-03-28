@@ -9,7 +9,7 @@ import {
   type RegistrationResponseJSON,
   type AuthenticationResponseJSON,
 } from '@simplewebauthn/server'
-import type { SSO, SSOProvider } from '@cordisjs/plugin-sso'
+import type { Sso, SsoProvider } from '@cordisjs/plugin-sso'
 
 declare module 'minato' {
   interface Tables {
@@ -51,7 +51,7 @@ export function apply(ctx: Context, config: Config) {
   const { timeout = 60000 } = config
   const challenges = new Map<string, PendingChallenge>()
 
-  ctx.minato.extend('sso_webauthn', {
+  ctx.model.extend('sso_webauthn', {
     identityId: 'unsigned(8)',
     credentialId: 'string(512)',
     publicKey: 'text',
@@ -72,7 +72,7 @@ export function apply(ctx: Context, config: Config) {
     const identities = await ctx.sso.getIdentities(userId)
     const ids = identities.filter(i => i.provider === 'webauthn').map(i => i.id)
     if (!ids.length) return []
-    const records = await ctx.minato.get('sso_webauthn', { identityId: { $in: ids } })
+    const records = await ctx.model.get('sso_webauthn', { identityId: { $in: ids } })
     return records.map(r => ({
       id: r.credentialId,
       publicKey: Buffer.from(r.publicKey, 'base64'),
@@ -83,7 +83,7 @@ export function apply(ctx: Context, config: Config) {
     }))
   }
 
-  const provider: SSOProvider = {
+  const provider: SsoProvider = {
     name: 'webauthn',
     interactive: false,
     autoRegister: false,
@@ -165,7 +165,7 @@ export function apply(ctx: Context, config: Config) {
           // Store credential — caller must provide identityId via the body
           const { identityId, deviceName } = body
           if (identityId) {
-            await ctx.minato.create('sso_webauthn', {
+            await ctx.model.create('sso_webauthn', {
               identityId,
               credentialId: credential.id,
               publicKey: Buffer.from(credential.publicKey).toString('base64'),
@@ -188,7 +188,7 @@ export function apply(ctx: Context, config: Config) {
       // Authentication
       try {
         const credentialId = body.id
-        const [record] = await ctx.minato.get('sso_webauthn', { credentialId })
+        const [record] = await ctx.model.get('sso_webauthn', { credentialId })
         if (!record) return false
 
         const credential: WebAuthnCredential = {
@@ -211,7 +211,7 @@ export function apply(ctx: Context, config: Config) {
         if (!verification.verified) return false
 
         // Update sign count
-        await ctx.minato.set('sso_webauthn', { credentialId }, {
+        await ctx.model.set('sso_webauthn', { credentialId }, {
           signCount: verification.authenticationInfo.newCounter,
           lastUsedAt: new Date(),
         })
@@ -225,7 +225,7 @@ export function apply(ctx: Context, config: Config) {
     async resolve(credentials: any) {
       const { credentialId } = credentials
       if (!credentialId) return null
-      const [record] = await ctx.minato.get('sso_webauthn', { credentialId })
+      const [record] = await ctx.model.get('sso_webauthn', { credentialId })
       if (!record) return null
       return { identityId: record.identityId }
     },
@@ -235,7 +235,7 @@ export function apply(ctx: Context, config: Config) {
       if (!identityId || !credentialId || !publicKey) {
         throw new Error('identityId, credentialId, and publicKey required')
       }
-      await ctx.minato.create('sso_webauthn', {
+      await ctx.model.create('sso_webauthn', {
         identityId,
         credentialId,
         publicKey: typeof publicKey === 'string' ? publicKey : Buffer.from(publicKey).toString('base64'),

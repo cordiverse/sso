@@ -1,6 +1,6 @@
 import { Context } from 'cordis'
 import { Random } from 'cosmokit'
-import type { SSO, SSOProvider } from '@cordisjs/plugin-sso'
+import type { Sso, SsoProvider } from '@cordisjs/plugin-sso'
 import type {} from '@cordisjs/sms'
 
 declare module 'minato' {
@@ -45,7 +45,7 @@ export function apply(ctx: Context, config: Config = {}) {
 
   const challenges = new Map<string, PendingChallenge>()
 
-  ctx.minato.extend('sso_sms', {
+  ctx.model.extend('sso_sms', {
     identityId: 'unsigned(8)',
     phone: 'string(255)',
     verified: { type: 'boolean', initial: false },
@@ -55,7 +55,7 @@ export function apply(ctx: Context, config: Config = {}) {
     foreign: { identityId: ['sso_identity', 'id'] },
   })
 
-  const provider: SSOProvider = {
+  const provider: SsoProvider = {
     name: 'sms',
     interactive: true,
     autoRegister,
@@ -97,7 +97,7 @@ export function apply(ctx: Context, config: Config = {}) {
     async resolve(credentials: any) {
       const { phone } = credentials
       if (!phone) return null
-      const [record] = await ctx.minato.get('sso_sms', { phone })
+      const [record] = await ctx.model.get('sso_sms', { phone })
       if (!record) return null
       return { identityId: record.identityId }
     },
@@ -107,10 +107,10 @@ export function apply(ctx: Context, config: Config = {}) {
       if (!identityId) throw new Error('identityId required')
       if (!phone) throw new Error('phone required')
 
-      const [existing] = await ctx.minato.get('sso_sms', { phone })
+      const [existing] = await ctx.model.get('sso_sms', { phone })
       if (existing) throw new Error('phone already registered')
 
-      await ctx.minato.create('sso_sms', {
+      await ctx.model.create('sso_sms', {
         identityId,
         phone,
         verified: true,

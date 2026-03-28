@@ -1,6 +1,6 @@
 import { Context } from 'cordis'
 import { Random } from 'cosmokit'
-import type { SSO, SSOProvider } from '@cordisjs/plugin-sso'
+import type { Sso, SsoProvider } from '@cordisjs/plugin-sso'
 
 declare module 'minato' {
   interface Tables {
@@ -43,7 +43,7 @@ export function apply(ctx: Context, config: Config) {
 
   const challenges = new Map<string, PendingChallenge>()
 
-  ctx.minato.extend('sso_mail', {
+  ctx.model.extend('sso_mail', {
     identityId: 'unsigned(8)',
     email: 'string(255)',
     verified: { type: 'boolean', initial: false },
@@ -53,7 +53,7 @@ export function apply(ctx: Context, config: Config) {
     foreign: { identityId: ['sso_identity', 'id'] },
   })
 
-  const provider: SSOProvider = {
+  const provider: SsoProvider = {
     name: 'mail',
     interactive: true,
     autoRegister,
@@ -96,7 +96,7 @@ export function apply(ctx: Context, config: Config) {
       const { email } = credentials
       if (!email) return null
 
-      const [record] = await ctx.minato.get('sso_mail', { email })
+      const [record] = await ctx.model.get('sso_mail', { email })
       if (!record) return null
 
       return { identityId: record.identityId }
@@ -107,10 +107,10 @@ export function apply(ctx: Context, config: Config) {
       if (!identityId) throw new Error('identityId required')
       if (!email) throw new Error('email required')
 
-      const [existing] = await ctx.minato.get('sso_mail', { email })
+      const [existing] = await ctx.model.get('sso_mail', { email })
       if (existing) throw new Error('email already registered')
 
-      await ctx.minato.create('sso_mail', {
+      await ctx.model.create('sso_mail', {
         identityId,
         email,
         verified: true,

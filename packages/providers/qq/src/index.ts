@@ -1,5 +1,5 @@
 import { Context } from 'cordis'
-import type { SSO, SSOProvider } from '@cordisjs/plugin-sso'
+import type { Sso, SsoProvider } from '@cordisjs/plugin-sso'
 
 declare module 'minato' {
   interface Tables {
@@ -35,7 +35,7 @@ function parseCallback(text: string): any {
 }
 
 export function apply(ctx: Context, config: Config) {
-  ctx.minato.extend('sso_qq', {
+  ctx.model.extend('sso_qq', {
     identityId: 'unsigned(8)',
     openId: 'string(255)',
     unionId: 'string(255)',
@@ -90,7 +90,7 @@ export function apply(ctx: Context, config: Config) {
     return res.json() as Promise<any>
   }
 
-  const provider: SSOProvider = {
+  const provider: SsoProvider = {
     name: 'qq',
     interactive: true,
     autoRegister: true,
@@ -116,9 +116,9 @@ export function apply(ctx: Context, config: Config) {
       const { openid, unionid } = meData
       const userInfo = await getUserInfo(access_token, openid)
 
-      const [existing] = await ctx.minato.get('sso_qq', { openId: openid })
+      const [existing] = await ctx.model.get('sso_qq', { openId: openid })
       if (existing) {
-        await ctx.minato.set('sso_qq', { identityId: existing.identityId }, {
+        await ctx.model.set('sso_qq', { identityId: existing.identityId }, {
           accessToken: access_token,
           refreshToken: refresh_token,
           unionId: unionid,
@@ -140,7 +140,7 @@ export function apply(ctx: Context, config: Config) {
       const meData = await getOpenId(tokenData.access_token)
       const userInfo = await getUserInfo(tokenData.access_token, meData.openid)
 
-      await ctx.minato.create('sso_qq', {
+      await ctx.model.create('sso_qq', {
         identityId,
         openId: meData.openid,
         unionId: meData.unionid,

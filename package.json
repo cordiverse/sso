@@ -6,7 +6,9 @@
   "packageManager": "yarn@4.13.0",
   "workspaces": [
     "external/*",
-    "packages/*"
+    "packages/*",
+    "packages/providers/*",
+    "packages/sms/*"
   ],
   "license": "MIT",
   "scripts": {

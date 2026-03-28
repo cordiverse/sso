@@ -49,6 +49,7 @@
     "minato": "^4.0.0-alpha.0"
   },
   "dependencies": {
-    "cosmokit": "^1.8.1"
+    "cosmokit": "^1.8.1",
+    "uuid": "^13.0.0"
   }
 }

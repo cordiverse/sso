@@ -1,5 +1,5 @@
 import { Context } from 'cordis'
-import type { SSO, SSOProvider } from '@cordisjs/plugin-sso'
+import type { Sso, SsoProvider } from '@cordisjs/plugin-sso'
 
 declare module 'minato' {
   interface Tables {
@@ -28,7 +28,7 @@ export const name = 'sso-wechat'
 export const inject = ['sso', 'sso.server']
 
 export function apply(ctx: Context, config: Config) {
-  ctx.minato.extend('sso_wechat', {
+  ctx.model.extend('sso_wechat', {
     identityId: 'unsigned(8)',
     openId: 'string(255)',
     unionId: 'string(255)',
@@ -61,7 +61,7 @@ export function apply(ctx: Context, config: Config) {
     return res.json() as Promise<any>
   }
 
-  const provider: SSOProvider = {
+  const provider: SsoProvider = {
     name: 'wechat',
     interactive: true,
     autoRegister: true,
@@ -89,9 +89,9 @@ export function apply(ctx: Context, config: Config) {
       const { access_token, openid, unionid, refresh_token, expires_in } = tokenData
       const userInfo = await getUserInfo(access_token, openid)
 
-      const [existing] = await ctx.minato.get('sso_wechat', { openId: openid })
+      const [existing] = await ctx.model.get('sso_wechat', { openId: openid })
       if (existing) {
-        await ctx.minato.set('sso_wechat', { identityId: existing.identityId }, {
+        await ctx.model.set('sso_wechat', { identityId: existing.identityId }, {
           accessToken: access_token,
           refreshToken: refresh_token,
           unionId: unionid,
@@ -113,7 +113,7 @@ export function apply(ctx: Context, config: Config) {
       const { access_token, openid, unionid, refresh_token, expires_in } = tokenData
       const userInfo = await getUserInfo(access_token, openid)
 
-      await ctx.minato.create('sso_wechat', {
+      await ctx.model.create('sso_wechat', {
         identityId,
         openId: openid,
         unionId: unionid,

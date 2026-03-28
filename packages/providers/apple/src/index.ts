@@ -1,6 +1,6 @@
 import { Context } from 'cordis'
 import { createPrivateKey, createSign } from 'node:crypto'
-import type { SSO, SSOProvider } from '@cordisjs/plugin-sso'
+import type { SsoProvider } from '@cordisjs/plugin-sso'
 
 declare module 'minato' {
   interface Tables {
@@ -10,7 +10,7 @@ declare module 'minato' {
 
 export interface SSOApple {
   identityId: number
-  sub: string            // Apple's unique user identifier
+  sub: string // Apple's unique user identifier
   email?: string
   displayName?: string
   refreshToken?: string
@@ -71,7 +71,7 @@ function decodeJWT(token: string): any {
 }
 
 export function apply(ctx: Context, config: Config) {
-  ctx.minato.extend('sso_apple', {
+  ctx.model.extend('sso_apple', {
     identityId: 'unsigned(8)',
     sub: 'string(255)',
     email: 'string(255)',
@@ -83,7 +83,7 @@ export function apply(ctx: Context, config: Config) {
     foreign: { identityId: ['sso_identity', 'id'] },
   })
 
-  const provider: SSOProvider = {
+  const provider: SsoProvider = {
     name: 'apple',
     interactive: true,
     autoRegister: true,
@@ -132,11 +132,11 @@ export function apply(ctx: Context, config: Config) {
         } catch {}
       }
 
-      const [existing] = await ctx.minato.get('sso_apple', { sub })
+      const [existing] = await ctx.model.get('sso_apple', { sub })
       if (existing) {
         // Update refresh token if provided
         if (tokenData.refresh_token) {
-          await ctx.minato.set('sso_apple', { identityId: existing.identityId }, {
+          await ctx.model.set('sso_apple', { identityId: existing.identityId }, {
             refreshToken: tokenData.refresh_token,
             ...(displayName ? { displayName } : {}),
           })
@@ -173,7 +173,7 @@ export function apply(ctx: Context, config: Config) {
         } catch {}
       }
 
-      await ctx.minato.create('sso_apple', {
+      await ctx.model.create('sso_apple', {
         identityId,
         sub: idToken.sub,
         email: idToken.email,

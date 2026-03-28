@@ -1,6 +1,6 @@
 import { Context } from 'cordis'
 import { createHmac, randomBytes } from 'node:crypto'
-import type { SSO, SSOProvider } from '@cordisjs/plugin-sso'
+import type { Sso, SsoProvider } from '@cordisjs/plugin-sso'
 
 declare module 'minato' {
   interface Tables {
@@ -101,7 +101,7 @@ export function apply(ctx: Context, config: Config = {}) {
     window = 1,
   } = config
 
-  ctx.minato.extend('sso_totp', {
+  ctx.model.extend('sso_totp', {
     identityId: 'unsigned(8)',
     secret: 'string(255)',
     label: 'string(255)',
@@ -111,7 +111,7 @@ export function apply(ctx: Context, config: Config = {}) {
     foreign: { identityId: ['sso_identity', 'id'] },
   })
 
-  const provider: SSOProvider = {
+  const provider: SsoProvider = {
     name: 'totp',
     interactive: false, // MFA only, cannot be used for primary login
     autoRegister: false,
@@ -120,7 +120,7 @@ export function apply(ctx: Context, config: Config = {}) {
       const { identityId, code } = credentials
       if (!identityId || !code) return null
 
-      const [record] = await ctx.minato.get('sso_totp', { identityId })
+      const [record] = await ctx.model.get('sso_totp', { identityId })
       if (!record || !record.verified) return null
 
       const secret = base32Decode(record.secret)
@@ -145,7 +145,7 @@ export function apply(ctx: Context, config: Config = {}) {
       const secretBytes = randomBytes(20)
       const secret = base32Encode(secretBytes)
 
-      await ctx.minato.create('sso_totp', {
+      await ctx.model.create('sso_totp', {
         identityId,
         secret,
         label,
@@ -166,7 +166,7 @@ export function apply(ctx: Context, config: Config = {}) {
     async verify(challengeId: string, response: string) {
       // challengeId is the identityId for TOTP setup verification
       const identityId = parseInt(challengeId)
-      const [record] = await ctx.minato.get('sso_totp', { identityId })
+      const [record] = await ctx.model.get('sso_totp', { identityId })
       if (!record) return false
 
       const secret = base32Decode(record.secret)
@@ -176,7 +176,7 @@ export function apply(ctx: Context, config: Config = {}) {
         const expected = generateTOTP(secret, now + i * period, period, digits, algorithm)
         if (expected === response) {
           // Mark as verified
-          await ctx.minato.set('sso_totp', { identityId }, { verified: true })
+          await ctx.model.set('sso_totp', { identityId }, { verified: true })
           return true
         }
       }

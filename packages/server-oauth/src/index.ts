@@ -1,7 +1,7 @@
 import { Context } from 'cordis'
 import { Random } from 'cosmokit'
 import { createHash } from 'node:crypto'
-import type { SSO } from '@cordisjs/plugin-sso'
+import type { Sso } from '@cordisjs/plugin-sso'
 
 declare module 'minato' {
   interface Tables {
@@ -15,8 +15,8 @@ export interface OAuthClient {
   clientId: string
   clientSecret: string
   name: string
-  redirectUris: string     // JSON array
-  scopes: string           // space-separated
+  redirectUris: string // JSON array
+  scopes: string // space-separated
   createdAt: Date
 }
 
@@ -59,9 +59,9 @@ export function apply(ctx: Context, config: Config = {}) {
     codeLifetime = 600,
     refreshTokenLifetime = 30 * 24 * 3600,
   } = config
-  const sso: SSO = ctx.sso
+  const sso: Sso = ctx.sso
 
-  ctx.minato.extend('oauth_client', {
+  ctx.model.extend('oauth_client', {
     clientId: 'string(255)',
     clientSecret: 'string(255)',
     name: 'string(255)',
@@ -70,7 +70,7 @@ export function apply(ctx: Context, config: Config = {}) {
     createdAt: 'timestamp',
   }, { primary: 'clientId' })
 
-  ctx.minato.extend('oauth_code', {
+  ctx.model.extend('oauth_code', {
     code: 'string(255)',
     clientId: 'string(255)',
     userId: 'unsigned(8)',
@@ -81,7 +81,7 @@ export function apply(ctx: Context, config: Config = {}) {
     expiresAt: 'timestamp',
   }, { primary: 'code' })
 
-  ctx.minato.extend('oauth_token', {
+  ctx.model.extend('oauth_token', {
     accessToken: 'string(255)',
     refreshToken: 'string(255)',
     clientId: 'string(255)',
@@ -92,7 +92,7 @@ export function apply(ctx: Context, config: Config = {}) {
   }, { primary: 'accessToken' })
 
   async function validateClient(clientId: string, clientSecret?: string) {
-    const [client] = await ctx.minato.get('oauth_client', { clientId })
+    const [client] = await ctx.model.get('oauth_client', { clientId })
     if (!client) return null
     if (clientSecret && client.clientSecret !== clientSecret) return null
     return client
@@ -140,7 +140,7 @@ export function apply(ctx: Context, config: Config = {}) {
       return
     }
 
-    // Authenticate user via SSO session
+    // Authenticate user via Sso session
     const token = koa.headers.authorization?.replace('Bearer ', '')
     const user = token ? await sso.validateSession(token) : null
     if (!user) {
@@ -152,7 +152,7 @@ export function apply(ctx: Context, config: Config = {}) {
 
     // Issue authorization code
     const code = Random.id(32, 36)
-    await ctx.minato.create('oauth_code', {
+    await ctx.model.create('oauth_code', {
       code,
       clientId: client_id,
       userId: user.id,
@@ -188,7 +188,7 @@ export function apply(ctx: Context, config: Config = {}) {
       }
 
       // Validate code
-      const [authCode] = await ctx.minato.get('oauth_code', { code })
+      const [authCode] = await ctx.model.get('oauth_code', { code })
       if (!authCode || authCode.clientId !== client_id) {
         koa.status = 400
         koa.body = { error: 'invalid_grant' }
@@ -197,7 +197,7 @@ export function apply(ctx: Context, config: Config = {}) {
 
       // Check expiry
       if (authCode.expiresAt < new Date()) {
-        await ctx.minato.remove('oauth_code', { code })
+        await ctx.model.remove('oauth_code', { code })
         koa.status = 400
         koa.body = { error: 'invalid_grant', error_description: 'code expired' }
         return
@@ -225,14 +225,14 @@ export function apply(ctx: Context, config: Config = {}) {
       }
 
       // Consume code
-      await ctx.minato.remove('oauth_code', { code })
+      await ctx.model.remove('oauth_code', { code })
 
       // Issue tokens
       const accessToken = Random.id(32, 36)
       const refreshToken = Random.id(32, 36)
       const now = new Date()
 
-      await ctx.minato.create('oauth_token', {
+      await ctx.model.create('oauth_token', {
         accessToken,
         refreshToken,
         clientId: client_id,
@@ -259,7 +259,7 @@ export function apply(ctx: Context, config: Config = {}) {
         return
       }
 
-      const [existing] = await ctx.minato.get('oauth_token', { refreshToken: refresh_token })
+      const [existing] = await ctx.model.get('oauth_token', { refreshToken: refresh_token })
       if (!existing || existing.clientId !== client_id) {
         koa.status = 400
         koa.body = { error: 'invalid_grant' }
@@ -267,13 +267,13 @@ export function apply(ctx: Context, config: Config = {}) {
       }
 
       // Rotate tokens
-      await ctx.minato.remove('oauth_token', { accessToken: existing.accessToken })
+      await ctx.model.remove('oauth_token', { accessToken: existing.accessToken })
 
       const accessToken = Random.id(32, 36)
       const refreshToken = Random.id(32, 36)
       const now = new Date()
 
-      await ctx.minato.create('oauth_token', {
+      await ctx.model.create('oauth_token', {
         accessToken,
         refreshToken,
         clientId: client_id,
@@ -305,7 +305,7 @@ export function apply(ctx: Context, config: Config = {}) {
       return
     }
 
-    const [oauthToken] = await ctx.minato.get('oauth_token', { accessToken: token })
+    const [oauthToken] = await ctx.model.get('oauth_token', { accessToken: token })
     if (!oauthToken || oauthToken.expiresAt < new Date()) {
       koa.status = 401
       koa.body = { error: 'invalid_token' }
@@ -336,10 +336,10 @@ export function apply(ctx: Context, config: Config = {}) {
     }
 
     // Try as access token
-    const removed = await ctx.minato.remove('oauth_token', { accessToken: revokeToken })
+    const removed = await ctx.model.remove('oauth_token', { accessToken: revokeToken })
     if (!removed.matched) {
       // Try as refresh token
-      await ctx.minato.remove('oauth_token', { refreshToken: revokeToken })
+      await ctx.model.remove('oauth_token', { refreshToken: revokeToken })
     }
 
     koa.body = {}

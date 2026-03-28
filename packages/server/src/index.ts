@@ -1,5 +1,5 @@
 import { Context } from 'cordis'
-import type { SSO } from '@cordisjs/plugin-sso'
+import type { Sso } from '@cordisjs/plugin-sso'
 
 declare module 'cordis' {
   interface Context {
@@ -30,7 +30,7 @@ export const name = 'sso-server'
 export const inject = ['sso', 'server']
 
 export function apply(ctx: Context) {
-  const sso: SSO = ctx.sso
+  const sso: Sso = ctx.sso
 
   // Provide sso.server sub-service
   const server: SSOServer = {
@@ -179,7 +179,7 @@ export function apply(ctx: Context) {
   })
 }
 
-async function handleRegister(sso: SSO, provider: any, credentials: any) {
+async function handleRegister(sso: Sso, provider: any, credentials: any) {
   if (!provider.register) throw createError(400, 'REGISTER_NOT_SUPPORTED')
   const { user, identityId } = await sso.createUser(provider.name)
   await provider.register({ ...credentials, identityId })
@@ -187,7 +187,7 @@ async function handleRegister(sso: SSO, provider: any, credentials: any) {
   return { token, userId: user.id }
 }
 
-async function requireSession(sso: SSO, token?: string) {
+async function requireSession(sso: Sso, token?: string) {
   if (!token) throw createError(401, 'SESSION_REQUIRED')
   const user = await sso.validateSession(token)
   if (!user) throw createError(401, 'SESSION_INVALID')

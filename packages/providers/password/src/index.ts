@@ -1,6 +1,6 @@
 import { Context } from 'cordis'
 import { createHash, randomBytes } from 'node:crypto'
-import type { SSO, SSOProvider } from '@cordisjs/plugin-sso'
+import type { Sso, SsoProvider } from '@cordisjs/plugin-sso'
 
 declare module 'minato' {
   interface Tables {
@@ -32,7 +32,7 @@ function hashPassword(password: string, salt: string, algorithm = 'sha256'): str
 export function apply(ctx: Context, config: Config = {}) {
   const { minLength = 8, algorithm = 'sha256' } = config
 
-  ctx.minato.extend('sso_password', {
+  ctx.model.extend('sso_password', {
     identityId: 'unsigned(8)',
     username: 'string(255)',
     hash: 'string(255)',
@@ -43,7 +43,7 @@ export function apply(ctx: Context, config: Config = {}) {
     foreign: { identityId: ['sso_identity', 'id'] },
   })
 
-  const provider: SSOProvider = {
+  const provider: SsoProvider = {
     name: 'password',
     interactive: true,
     autoRegister: false,
@@ -52,7 +52,7 @@ export function apply(ctx: Context, config: Config = {}) {
       const { username, password } = credentials
       if (!username || !password) return null
 
-      const [record] = await ctx.minato.get('sso_password', { username })
+      const [record] = await ctx.model.get('sso_password', { username })
       if (!record) return null
 
       const hash = hashPassword(password, record.salt, algorithm)
@@ -70,13 +70,13 @@ export function apply(ctx: Context, config: Config = {}) {
       }
 
       // Check if username already taken
-      const [existing] = await ctx.minato.get('sso_password', { username })
+      const [existing] = await ctx.model.get('sso_password', { username })
       if (existing) throw new Error('username already taken')
 
       const salt = randomBytes(16).toString('hex')
       const hash = hashPassword(password, salt, algorithm)
 
-      await ctx.minato.create('sso_password', {
+      await ctx.model.create('sso_password', {
         identityId,
         username,
         hash,
