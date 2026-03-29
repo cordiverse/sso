@@ -1,6 +1,6 @@
 import { Context } from 'cordis'
 import { randomBytes, randomUUID } from 'node:crypto'
-import type { SsoProvider } from '@cordisjs/plugin-sso'
+import { SsoProvider } from '@cordisjs/plugin-sso'
 import type {} from 'minato'
 
 function randomDigits(length: number): string {
@@ -20,18 +20,11 @@ export interface SsoMail {
 }
 
 export interface Config {
-  /** Function to send the verification code email */
   send: (email: string, code: string) => Promise<void>
-  /** Code expiry in milliseconds (default: 5 min) */
   codeExpiry?: number
-  /** Code length (default: 6) */
   codeLength?: number
-  /** Auto-register when email not found */
   autoRegister?: boolean
 }
-
-export const name = 'sso-mail'
-export const inject = ['sso']
 
 interface PendingChallenge {
   email: string
@@ -39,90 +32,80 @@ interface PendingChallenge {
   expiresAt: number
 }
 
-export function apply(ctx: Context, config: Config) {
-  const {
-    codeExpiry = 5 * 60 * 1000,
-    codeLength = 6,
-    autoRegister = true,
-  } = config
+export default class MailProvider extends SsoProvider {
+  name = 'mail'
+  interactive = true
+  autoRegister: boolean
 
-  const challenges = new Map<string, PendingChallenge>()
+  private challenges = new Map<string, PendingChallenge>()
+  private codeExpiry: number
+  private codeLength: number
+  private send: (email: string, code: string) => Promise<void>
 
-  ctx.model.extend('sso_mail', {
-    identityId: 'unsigned(8)',
-    email: 'string(255)',
-    verified: { type: 'boolean', initial: false },
-  }, {
-    primary: 'identityId',
-    unique: [['email']],
-    foreign: { identityId: ['sso_identity', 'id'] },
-  })
+  constructor(ctx: Context, config: Config) {
+    super(ctx)
+    this.codeExpiry = config.codeExpiry ?? 5 * 60 * 1000
+    this.codeLength = config.codeLength ?? 6
+    this.autoRegister = config.autoRegister ?? true
+    this.send = config.send
 
-  const provider: SsoProvider = {
-    name: 'mail',
-    interactive: true,
-    autoRegister,
-
-    async challenge(target: any) {
-      const { email } = target
-      if (!email) throw new Error('email required')
-
-      const code = randomDigits(codeLength)
-      const challengeId = randomUUID()
-
-      challenges.set(challengeId, {
-        email,
-        code,
-        expiresAt: Date.now() + codeExpiry,
-      })
-
-      // Auto-cleanup
-      ctx.setTimeout(() => challenges.delete(challengeId), codeExpiry)
-
-      await config.send(email, code)
-
-      return { challengeId }
-    },
-
-    async verify(challengeId: string, response: string) {
-      const challenge = challenges.get(challengeId)
-      if (!challenge) return false
-      if (Date.now() > challenge.expiresAt) {
-        challenges.delete(challengeId)
-        return false
-      }
-      if (challenge.code !== response) return false
-
-      challenges.delete(challengeId)
-      return true
-    },
-
-    async resolve(credentials: any) {
-      const { email } = credentials
-      if (!email) return null
-
-      const [record] = await ctx.model.get('sso_mail', { email })
-      if (!record) return null
-
-      return { identityId: record.identityId }
-    },
-
-    async register(credentials: any) {
-      const { identityId, email } = credentials
-      if (!identityId) throw new Error('identityId required')
-      if (!email) throw new Error('email required')
-
-      const [existing] = await ctx.model.get('sso_mail', { email })
-      if (existing) throw new Error('email already registered')
-
-      await ctx.model.create('sso_mail', {
-        identityId,
-        email,
-        verified: true,
-      })
-      return {}
-    },
+    ctx.model.extend('sso_mail', {
+      identityId: 'unsigned(8)',
+      email: 'string(255)',
+      verified: { type: 'boolean', initial: false },
+    }, {
+      primary: 'identityId',
+      unique: [['email']],
+      foreign: { identityId: ['sso_identity', 'id'] },
+    })
   }
 
-  ctx.sso.register(provider)
+  async challenge(target: any) {
+    const { email } = target
+    if (!email) throw new Error('email required')
+
+    const code = randomDigits(this.codeLength)
+    const challengeId = randomUUID()
+
+    this.challenges.set(challengeId, {
+      email,
+      code,
+      expiresAt: Date.now() + this.codeExpiry,
+    })
+
+    this.ctx.setTimeout(() => this.challenges.delete(challengeId), this.codeExpiry)
+    await this.send(email, code)
+
+    return { challengeId }
+  }
+
+  async verify(challengeId: string, response: string) {
+    const challenge = this.challenges.get(challengeId)
+    if (!challenge) return false
+    if (Date.now() > challenge.expiresAt) {
+      this.challenges.delete(challengeId)
+      return false
+    }
+    if (challenge.code !== response) return false
+    this.challenges.delete(challengeId)
+    return true
+  }
+
+  async resolve(credentials: any) {
+    const { email } = credentials
+    if (!email) return null
+    const [record] = await this.ctx.model.get('sso_mail', { email })
+    if (!record) return null
+    return { identityId: record.identityId }
+  }
+
+  async register(credentials: any) {
+    const { identityId, email } = credentials
+    if (!identityId) throw new Error('identityId required')
+    if (!email) throw new Error('email required')
+    const [existing] = await this.ctx.model.get('sso_mail', { email })
+    if (existing) throw new Error('email already registered')
+    await this.ctx.model.create('sso_mail', { identityId, email, verified: true })
+    return {}
+  }
 }

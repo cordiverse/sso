@@ -20,10 +20,18 @@ declare module 'minato' {
   }
 }
 
-export interface SsoProvider {
-  name: string
-  interactive: boolean
-  autoRegister: boolean
+@Inject('sso')
+@Inject('database')
+export abstract class SsoProvider {
+  abstract name: string
+  abstract interactive: boolean
+  abstract autoRegister: boolean
+
+  constructor(public ctx: Context) {}
+
+  *[Service.init]() {
+    yield this.ctx.sso.register(this)
+  }
 
   resolve?(credentials: any): Promise<{ identityId: number; data?: any } | null>
   register?(credentials: any): Promise<{ data?: any }>

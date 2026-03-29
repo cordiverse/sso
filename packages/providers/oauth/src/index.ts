@@ -1,5 +1,5 @@
-import { Context } from 'cordis'
-import type { SsoProvider } from '@cordisjs/plugin-sso'
+import { Context, Inject } from 'cordis'
+import { SsoProvider } from '@cordisjs/plugin-sso'
 import type {} from '@cordisjs/plugin-server'
 import type {} from 'minato'
 
@@ -11,7 +11,7 @@ declare module 'minato' {
 
 export interface SsoOAuth {
   identityId: number
-  provider: string // "github", "google", etc.
+  provider: string
   externalId: string
   accessToken: string
   refreshToken?: string
@@ -22,32 +22,21 @@ export interface SsoOAuth {
   tokenExpiresAt?: Date
 }
 
-/** Defines how to interact with a specific OAuth provider */
 export interface OAuthPreset {
-  /** Provider name (used as sso_identity.provider and sso_oauth.provider) */
   name: string
-  /** Authorization URL */
   authorizeUrl: string
-  /** Token exchange URL */
   tokenUrl: string
-  /** User info URL */
   userInfoUrl: string
-  /** Default scope */
   defaultScope: string
-  /** Extra params to add to authorize URL */
   authorizeParams?: Record<string, string>
-  /** Extra params to add to token request body */
   tokenParams?: Record<string, string>
-  /** How to send the access token when fetching user info (default: "header") */
   tokenTransport?: 'header' | 'query'
-  /** Extract user data from the userinfo response */
   extractUser(data: any): {
     externalId: string
     displayName?: string
     email?: string
     avatar?: string
   }
-  /** Related identities implied by this login */
   getRelated?(data: any): { provider: string; key: any }[]
 }
 
@@ -58,10 +47,7 @@ export const github: OAuthPreset = {
   userInfoUrl: 'https://api.github.com/user',
   defaultScope: 'read:user user:email',
   extractUser: (data) => ({
-    externalId: String(data.id),
-    displayName: data.login,
-    email: data.email,
-    avatar: data.avatar_url,
+    externalId: String(data.id), displayName: data.login, email: data.email, avatar: data.avatar_url,
   }),
 }
 
@@ -74,10 +60,7 @@ export const google: OAuthPreset = {
   authorizeParams: { access_type: 'offline', prompt: 'consent' },
   tokenParams: { grant_type: 'authorization_code' },
   extractUser: (data) => ({
-    externalId: data.id,
-    displayName: data.name,
-    email: data.email,
-    avatar: data.picture,
+    externalId: data.id, displayName: data.name, email: data.email, avatar: data.picture,
   }),
 }
 
@@ -90,10 +73,7 @@ export const microsoft: OAuthPreset = {
   authorizeParams: { response_mode: 'query' },
   tokenParams: { grant_type: 'authorization_code' },
   extractUser: (data) => ({
-    externalId: data.id,
-    displayName: data.displayName,
-    email: data.mail ?? data.userPrincipalName,
-    avatar: undefined, // MS Graph photo needs separate request
+    externalId: data.id, displayName: data.displayName, email: data.mail ?? data.userPrincipalName, avatar: undefined,
   }),
 }
 
@@ -108,9 +88,7 @@ export const discord: OAuthPreset = {
     externalId: data.id,
     displayName: data.global_name ?? data.username,
     email: data.email,
-    avatar: data.avatar
-      ? `https://cdn.discordapp.com/avatars/${data.id}/${data.avatar}.png`
-      : undefined,
+    avatar: data.avatar ? `https://cdn.discordapp.com/avatars/${data.id}/${data.avatar}.png` : undefined,
   }),
 }
 
@@ -122,10 +100,7 @@ export const gitlab: OAuthPreset = {
   defaultScope: 'read_user',
   tokenParams: { grant_type: 'authorization_code' },
   extractUser: (data) => ({
-    externalId: String(data.id),
-    displayName: data.username,
-    email: data.email,
-    avatar: data.avatar_url,
+    externalId: String(data.id), displayName: data.username, email: data.email, avatar: data.avatar_url,
   }),
 }
 
@@ -136,10 +111,7 @@ export const facebook: OAuthPreset = {
   userInfoUrl: 'https://graph.facebook.com/me?fields=id,name,email,picture',
   defaultScope: 'email public_profile',
   extractUser: (data) => ({
-    externalId: data.id,
-    displayName: data.name,
-    email: data.email,
-    avatar: data.picture?.data?.url,
+    externalId: data.id, displayName: data.name, email: data.email, avatar: data.picture?.data?.url,
   }),
 }
 
@@ -151,10 +123,7 @@ export const linkedin: OAuthPreset = {
   defaultScope: 'openid email profile',
   tokenParams: { grant_type: 'authorization_code' },
   extractUser: (data) => ({
-    externalId: data.sub,
-    displayName: data.name,
-    email: data.email,
-    avatar: data.picture,
+    externalId: data.sub, displayName: data.name, email: data.email, avatar: data.picture,
   }),
 }
 
@@ -180,10 +149,7 @@ export const gitee: OAuthPreset = {
   defaultScope: 'user_info',
   tokenParams: { grant_type: 'authorization_code' },
   extractUser: (data) => ({
-    externalId: String(data.id),
-    displayName: data.login,
-    email: data.email,
-    avatar: data.avatar_url,
+    externalId: String(data.id), displayName: data.login, email: data.email, avatar: data.avatar_url,
   }),
 }
 
@@ -195,10 +161,7 @@ export const dingtalk: OAuthPreset = {
   defaultScope: 'openid',
   tokenParams: { grantType: 'authorization_code' },
   extractUser: (data) => ({
-    externalId: data.openId ?? data.unionId,
-    displayName: data.nick,
-    email: data.email,
-    avatar: data.avatarUrl,
+    externalId: data.openId ?? data.unionId, displayName: data.nick, email: data.email, avatar: data.avatarUrl,
   }),
 }
 
@@ -212,7 +175,7 @@ export const weibo: OAuthPreset = {
   extractUser: (data) => ({
     externalId: String(data.id ?? data.uid),
     displayName: data.screen_name ?? data.name,
-    email: undefined, // Weibo doesn't provide email
+    email: undefined,
     avatar: data.avatar_large ?? data.profile_image_url,
   }),
 }
@@ -226,18 +189,11 @@ export const feishu: OAuthPreset = {
   tokenParams: { grant_type: 'authorization_code' },
   extractUser: (data) => {
     const user = data.data ?? data
-    return {
-      externalId: user.open_id,
-      displayName: user.name,
-      email: user.email,
-      avatar: user.avatar_url,
-    }
+    return { externalId: user.open_id, displayName: user.name, email: user.email, avatar: user.avatar_url }
   },
   getRelated: (data) => {
     const user = data.data ?? data
-    return [
-      { provider: 'satori', key: { platform: 'lark', pid: user.open_id } },
-    ]
+    return [{ provider: 'satori', key: { platform: 'lark', pid: user.open_id } }]
   },
 }
 
@@ -254,18 +210,11 @@ export function lark(isFeishu = false): OAuthPreset {
     tokenParams: { grant_type: 'authorization_code' },
     extractUser: (data) => {
       const user = data.data ?? data
-      return {
-        externalId: user.open_id,
-        displayName: user.name,
-        email: user.email,
-        avatar: user.avatar_url,
-      }
+      return { externalId: user.open_id, displayName: user.name, email: user.email, avatar: user.avatar_url }
     },
     getRelated: (data) => {
       const user = data.data ?? data
-      return [
-        { provider: 'satori', key: { platform: 'lark', pid: user.open_id } },
-      ]
+      return [{ provider: 'satori', key: { platform: 'lark', pid: user.open_id } }]
     },
   }
 }
@@ -275,7 +224,6 @@ export interface Config {
   clientId: string
   clientSecret: string
   scope?: string
-  /** Custom endpoints (used when preset is 'none' or to override preset values) */
   name?: string
   authorizeUrl?: string
   tokenUrl?: string
@@ -286,84 +234,109 @@ const builtinPresets: Record<string, OAuthPreset> = {
   github, google, microsoft, discord, gitlab, facebook, linkedin, slack, gitee, dingtalk, weibo, feishu,
 }
 
-export const name = 'sso-oauth'
-export const inject = ['sso', 'server']
-export const reusable = true
+@Inject('server')
+export default class OAuthProvider extends SsoProvider {
+  static reusable = true
 
-export function apply(ctx: Context, config: Config) {
-  let preset: OAuthPreset
-  if (typeof config.preset === 'string') {
-    if (config.preset === 'lark') {
-      preset = lark()
-    } else if (config.preset === 'none') {
-      // Manual configuration
-      if (!config.name || !config.authorizeUrl || !config.tokenUrl || !config.userInfoUrl) {
-        throw new Error('preset "none" requires name, authorizeUrl, tokenUrl, and userInfoUrl')
+  name: string
+  interactive = true
+  autoRegister = true
+
+  private preset: OAuthPreset
+  private scope: string
+
+  constructor(ctx: Context, private config: Config) {
+    super(ctx)
+
+    if (typeof config.preset === 'string') {
+      if (config.preset === 'lark') {
+        this.preset = lark()
+      } else if (config.preset === 'none') {
+        if (!config.name || !config.authorizeUrl || !config.tokenUrl || !config.userInfoUrl) {
+          throw new Error('preset "none" requires name, authorizeUrl, tokenUrl, and userInfoUrl')
+        }
+        this.preset = {
+          name: config.name,
+          authorizeUrl: config.authorizeUrl,
+          tokenUrl: config.tokenUrl,
+          userInfoUrl: config.userInfoUrl,
+          defaultScope: config.scope ?? '',
+          extractUser: (data) => ({
+            externalId: String(data.id ?? data.sub ?? data.user_id),
+            displayName: data.name ?? data.login ?? data.username ?? data.display_name,
+            email: data.email,
+            avatar: data.avatar_url ?? data.avatar ?? data.picture,
+          }),
+        }
+      } else if (builtinPresets[config.preset]) {
+        this.preset = builtinPresets[config.preset]
+      } else {
+        throw new Error(`unknown preset: ${config.preset}`)
       }
-      preset = {
-        name: config.name,
-        authorizeUrl: config.authorizeUrl,
-        tokenUrl: config.tokenUrl,
-        userInfoUrl: config.userInfoUrl,
-        defaultScope: config.scope ?? '',
-        extractUser: (data) => ({
-          externalId: String(data.id ?? data.sub ?? data.user_id),
-          displayName: data.name ?? data.login ?? data.username ?? data.display_name,
-          email: data.email,
-          avatar: data.avatar_url ?? data.avatar ?? data.picture,
-        }),
-      }
-    } else if (builtinPresets[config.preset]) {
-      preset = builtinPresets[config.preset]
     } else {
-      throw new Error(`unknown preset: ${config.preset}`)
+      this.preset = config.preset
     }
-  } else {
-    preset = config.preset
+
+    this.name = this.preset.name
+    this.scope = config.scope ?? this.preset.defaultScope
+
+    ctx.model.extend('sso_oauth', {
+      identityId: 'unsigned(8)',
+      provider: 'string(255)',
+      externalId: 'string(255)',
+      accessToken: 'string(255)',
+      refreshToken: 'string(255)',
+      displayName: 'string(255)',
+      email: 'string(255)',
+      avatar: 'text',
+      scope: 'string(255)',
+      tokenExpiresAt: 'timestamp',
+    }, {
+      primary: 'identityId',
+      unique: [['provider', 'externalId']],
+      foreign: { identityId: ['sso_identity', 'id'] },
+    })
+
+    ctx.server.get(`/sso/callback/${this.name}`, async (req) => {
+      const url = new URL(req.url, 'http://localhost')
+      const code = url.searchParams.get('code')!
+      const state = url.searchParams.get('state')!
+      const redirect_uri = url.searchParams.get('redirect_uri')!
+      const result = await this.resolve!({ code, state, redirect_uri })
+      if (result) {
+        const identity = await ctx.sso.getIdentity(result.identityId)
+        const token = await ctx.sso.createSession(identity!.userId, identity!.id)
+        return Response.json({ token })
+      }
+      if (this.autoRegister) {
+        const { user, identityId } = await ctx.sso.createUser(this.name)
+        await this.register!({ identityId, code, redirect_uri })
+        const token = await ctx.sso.createSession(user.id, identityId)
+        return Response.json({ token })
+      }
+      return Response.json({ error: 'ACCOUNT_NOT_FOUND' }, { status: 401 })
+    })
   }
 
-  const providerName = preset.name
-  const scope = config.scope ?? preset.defaultScope
-
-  // Extend table (only once, shared across all OAuth providers)
-  ctx.model.extend('sso_oauth', {
-    identityId: 'unsigned(8)',
-    provider: 'string(255)',
-    externalId: 'string(255)',
-    accessToken: 'string(255)',
-    refreshToken: 'string(255)',
-    displayName: 'string(255)',
-    email: 'string(255)',
-    avatar: 'text',
-    scope: 'string(255)',
-    tokenExpiresAt: 'timestamp',
-  }, {
-    primary: 'identityId',
-    unique: [['provider', 'externalId']],
-    foreign: { identityId: ['sso_identity', 'id'] },
-  })
-
-  async function exchangeToken(code: string, redirectUri?: string): Promise<any> {
+  private async exchangeToken(code: string, redirectUri?: string): Promise<any> {
     const body: Record<string, string> = {
-      client_id: config.clientId,
-      client_secret: config.clientSecret,
+      client_id: this.config.clientId,
+      client_secret: this.config.clientSecret,
       code,
-      ...preset.tokenParams,
+      ...this.preset.tokenParams,
     }
     if (redirectUri) body.redirect_uri = redirectUri
 
-    // Lark needs app_access_token instead of client_secret
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
     }
 
-    if (providerName === 'lark') {
-      // Lark uses app_access_token auth
-      const appTokenRes = await fetch(preset.tokenUrl.replace('/authen/v1/oidc/access_token', '/auth/v3/app_access_token/internal'), {
+    if (this.name === 'lark') {
+      const appTokenRes = await fetch(this.preset.tokenUrl.replace('/authen/v1/oidc/access_token', '/auth/v3/app_access_token/internal'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ app_id: config.clientId, app_secret: config.clientSecret }),
+        body: JSON.stringify({ app_id: this.config.clientId, app_secret: this.config.clientSecret }),
       })
       const appTokenData = await appTokenRes.json() as any
       headers['Authorization'] = `Bearer ${appTokenData.app_access_token}`
@@ -371,136 +344,85 @@ export function apply(ctx: Context, config: Config) {
       delete body.client_secret
     }
 
-    const res = await fetch(preset.tokenUrl, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-    })
+    const res = await fetch(this.preset.tokenUrl, { method: 'POST', headers, body: JSON.stringify(body) })
     return res.json()
   }
 
-  async function fetchUserInfo(accessToken: string): Promise<any> {
+  private async fetchUserInfo(accessToken: string): Promise<any> {
     const headers: Record<string, string> = {}
-    let url = preset.userInfoUrl
-
-    if (preset.tokenTransport === 'query') {
+    let url = this.preset.userInfoUrl
+    if (this.preset.tokenTransport === 'query') {
       url += `?access_token=${accessToken}`
     } else {
       headers['Authorization'] = `Bearer ${accessToken}`
     }
-
     const res = await fetch(url, { headers })
     return res.json()
   }
 
-  const provider: SsoProvider = {
-    name: providerName,
-    interactive: true,
-    autoRegister: true,
+  getAuthUrl(redirectUri: string, state: string) {
+    const params = new URLSearchParams({
+      client_id: this.config.clientId,
+      redirect_uri: redirectUri,
+      state,
+      ...(this.scope ? { scope: this.scope } : {}),
+      ...(this.preset.authorizeParams ?? {}),
+    })
+    if (this.name === 'lark') {
+      params.delete('client_id')
+      params.set('app_id', this.config.clientId)
+    }
+    return `${this.preset.authorizeUrl}?${params}`
+  }
 
-    getAuthUrl(redirectUri: string, state: string) {
-      const params = new URLSearchParams({
-        client_id: config.clientId,
-        redirect_uri: redirectUri,
-        state,
-        ...(scope ? { scope } : {}),
-        ...(preset.authorizeParams ?? {}),
-      })
-      // Lark uses app_id instead of client_id
-      if (providerName === 'lark') {
-        params.delete('client_id')
-        params.set('app_id', config.clientId)
-      }
-      return `${preset.authorizeUrl}?${params}`
-    },
-
-    async resolve(credentials: any) {
-      const { code, redirect_uri } = credentials
-      if (!code) return null
-
-      const tokenData = await exchangeToken(code, redirect_uri) as any
-      if (tokenData.error) return null
-
-      const accessToken = tokenData.access_token ?? tokenData.data?.access_token
-      if (!accessToken) return null
-
-      const userInfoData = await fetchUserInfo(accessToken)
-      const userInfo = preset.extractUser(userInfoData)
-
-      const [existing] = await ctx.model.get('sso_oauth', {
-        provider: providerName,
-        externalId: userInfo.externalId,
-      })
-
-      if (existing) {
-        await ctx.model.set('sso_oauth', { identityId: existing.identityId }, {
-          accessToken,
-          refreshToken: tokenData.refresh_token ?? existing.refreshToken,
-          displayName: userInfo.displayName,
-          email: userInfo.email,
-          avatar: userInfo.avatar,
-          scope,
-          tokenExpiresAt: tokenData.expires_in
-            ? new Date(Date.now() + tokenData.expires_in * 1000)
-            : undefined,
-        })
-        const result: any = { identityId: existing.identityId }
-        if (preset.getRelated) {
-          result.related = preset.getRelated(userInfoData)
-        }
-        return result
-      }
-
-      return null
-    },
-
-    async register(credentials: any) {
-      const { identityId, code, redirect_uri } = credentials
-      if (!identityId) throw new Error('identityId required')
-
-      const tokenData = await exchangeToken(code, redirect_uri) as any
-      const accessToken = tokenData.access_token ?? tokenData.data?.access_token
-      const userInfoData = await fetchUserInfo(accessToken)
-      const userInfo = preset.extractUser(userInfoData)
-
-      await ctx.model.create('sso_oauth', {
-        identityId,
-        provider: providerName,
-        externalId: userInfo.externalId,
+  async resolve(credentials: any) {
+    const { code, redirect_uri } = credentials
+    if (!code) return null
+    const tokenData = await this.exchangeToken(code, redirect_uri) as any
+    if (tokenData.error) return null
+    const accessToken = tokenData.access_token ?? tokenData.data?.access_token
+    if (!accessToken) return null
+    const userInfoData = await this.fetchUserInfo(accessToken)
+    const userInfo = this.preset.extractUser(userInfoData)
+    const [existing] = await this.ctx.model.get('sso_oauth', {
+      provider: this.name, externalId: userInfo.externalId,
+    })
+    if (existing) {
+      await this.ctx.model.set('sso_oauth', { identityId: existing.identityId }, {
         accessToken,
-        refreshToken: tokenData.refresh_token,
+        refreshToken: tokenData.refresh_token ?? existing.refreshToken,
         displayName: userInfo.displayName,
         email: userInfo.email,
         avatar: userInfo.avatar,
-        scope,
-        tokenExpiresAt: tokenData.expires_in
-          ? new Date(Date.now() + tokenData.expires_in * 1000)
-          : undefined,
+        scope: this.scope,
+        tokenExpiresAt: tokenData.expires_in ? new Date(Date.now() + tokenData.expires_in * 1000) : undefined,
       })
-      return {}
-    },
+      const result: any = { identityId: existing.identityId }
+      if (this.preset.getRelated) result.related = this.preset.getRelated(userInfoData)
+      return result
+    }
+    return null
   }
 
-  // Register callback route
-  ctx.server.get(`/sso/callback/${providerName}`, async (req) => {
-    const url = new URL(req.url, 'http://localhost')
-    const code = url.searchParams.get('code')!
-    const state = url.searchParams.get('state')!
-    const redirect_uri = url.searchParams.get('redirect_uri')!
-    const result = await provider.resolve!({ code, state, redirect_uri })
-    if (result) {
-      const identity = await ctx.sso.getIdentity(result.identityId)
-      const token = await ctx.sso.createSession(identity!.userId, identity!.id)
-      return Response.json({ token })
-    }
-    if (provider.autoRegister) {
-      const { user, identityId } = await ctx.sso.createUser(providerName)
-      await provider.register!({ identityId, code, redirect_uri })
-      const token = await ctx.sso.createSession(user.id, identityId)
-      return Response.json({ token })
-    }
-    return Response.json({ error: 'ACCOUNT_NOT_FOUND' }, { status: 401 })
-  })
-
-  ctx.sso.register(provider)
+  async register(credentials: any) {
+    const { identityId, code, redirect_uri } = credentials
+    if (!identityId) throw new Error('identityId required')
+    const tokenData = await this.exchangeToken(code, redirect_uri) as any
+    const accessToken = tokenData.access_token ?? tokenData.data?.access_token
+    const userInfoData = await this.fetchUserInfo(accessToken)
+    const userInfo = this.preset.extractUser(userInfoData)
+    await this.ctx.model.create('sso_oauth', {
+      identityId,
+      provider: this.name,
+      externalId: userInfo.externalId,
+      accessToken,
+      refreshToken: tokenData.refresh_token,
+      displayName: userInfo.displayName,
+      email: userInfo.email,
+      avatar: userInfo.avatar,
+      scope: this.scope,
+      tokenExpiresAt: tokenData.expires_in ? new Date(Date.now() + tokenData.expires_in * 1000) : undefined,
+    })
+    return {}
+  }
 }
