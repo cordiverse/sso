@@ -1,6 +1,7 @@
 import { Context } from 'cordis'
 import { createPrivateKey, createSign } from 'node:crypto'
 import type { SsoProvider } from '@cordisjs/plugin-sso'
+import type {} from '@cordisjs/plugin-server'
 import type {} from 'minato'
 
 declare module 'minato' {
@@ -29,7 +30,7 @@ export interface Config {
 }
 
 export const name = 'sso-apple'
-export const inject = ['sso', 'sso.server']
+export const inject = ['sso', 'server']
 
 // Apple requires a JWT as client_secret, signed with the developer's private key
 function generateClientSecret(config: Config): string {
@@ -186,21 +187,25 @@ export function apply(ctx: Context, config: Config) {
   }
 
   // Apple uses form_post for callback (POST, not GET)
-  ctx['sso.server'].route('post', '/callback/apple', async (routeCtx) => {
-    const { code, state, id_token, user } = routeCtx.body ?? {}
+  ctx.server.post('/sso/callback/apple', async (req) => {
+    let body: any = {}
+    try {
+      body = await req.json()
+    } catch {}
+    const { code, state, id_token, user } = body
     const result = await provider.resolve!({ code, state, id_token, user })
     if (result) {
       const identity = await ctx.sso.getIdentity(result.identityId)
       const token = await ctx.sso.createSession(identity!.userId, identity!.id)
-      return { token }
+      return Response.json({ token })
     }
     if (provider.autoRegister) {
       const { user: ssoUser, identityId } = await ctx.sso.createUser('apple')
       await provider.register!({ identityId, code, id_token, user })
       const token = await ctx.sso.createSession(ssoUser.id, identityId)
-      return { token }
+      return Response.json({ token })
     }
-    return { error: 'ACCOUNT_NOT_FOUND' }
+    return Response.json({ error: 'ACCOUNT_NOT_FOUND' }, { status: 401 })
   })
 
   ctx.sso.register(provider)

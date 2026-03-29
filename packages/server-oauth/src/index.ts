@@ -1,9 +1,8 @@
 import { Context } from 'cordis'
-import { Random } from 'cosmokit'
 import type {} from 'minato'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { Sso } from '@cordisjs/plugin-sso'
-import type {} from '@cordisjs/plugin-server'
+import type { Request } from '@cordisjs/plugin-server'
 
 declare module 'minato' {
   interface Tables {
@@ -17,8 +16,8 @@ export interface OAuthClient {
   clientId: string
   clientSecret: string
   name: string
-  redirectUris: string // JSON array
-  scopes: string // space-separated
+  redirectUris: string
+  scopes: string
   createdAt: Date
 }
 
@@ -44,22 +43,19 @@ export interface OAuthToken {
 }
 
 export interface Config {
-  /** Access token lifetime in seconds (default: 3600) */
   tokenLifetime?: number
-  /** Authorization code lifetime in seconds (default: 600) */
   codeLifetime?: number
-  /** Refresh token lifetime in seconds (default: 30 days) */
   refreshTokenLifetime?: number
 }
 
 export const name = 'server-oauth'
-export const inject = ['sso', 'server', 'minato']
+export const inject = ['sso', 'server', 'model']
 
 export function apply(ctx: Context, config: Config = {}) {
   const {
     tokenLifetime = 3600,
     codeLifetime = 600,
-    refreshTokenLifetime = 30 * 24 * 3600,
+    // refreshTokenLifetime = 30 * 24 * 3600,
   } = config
   const sso: Sso = ctx.sso
 
@@ -93,6 +89,20 @@ export function apply(ctx: Context, config: Config = {}) {
     createdAt: 'timestamp',
   }, { primary: 'accessToken' })
 
+  function getQuery(req: Request): Record<string, string> {
+    const url = new URL(req.url, 'http://localhost')
+    const query: Record<string, string> = {}
+    url.searchParams.forEach((v, k) => { query[k] = v })
+    return query
+  }
+
+  function getToken(req: Request): string | undefined {
+    const header = req.headers.get('authorization')
+    if (!header) return
+    const [type, token] = header.split(' ')
+    if (type.toLowerCase() === 'bearer') return token
+  }
+
   async function validateClient(clientId: string, clientSecret?: string) {
     const [client] = await ctx.model.get('oauth_client', { clientId })
     if (!client) return null
@@ -110,50 +120,37 @@ export function apply(ctx: Context, config: Config = {}) {
       const hash = createHash('sha256').update(codeVerifier).digest('base64url')
       return hash === codeChallenge
     }
-    // plain method
     return codeVerifier === codeChallenge
   }
 
-  // GET /oauth/authorize — Authorization endpoint
-  // In a real implementation, this would render a consent page.
-  // For API use, it accepts the user's session token and issues a code directly.
-  ctx.server.get('/oauth/authorize', async (koa) => {
+  // GET /oauth/authorize
+  ctx.server.get('/oauth/authorize', async (req) => {
+    const query = getQuery(req)
     const {
       response_type, client_id, redirect_uri, scope, state,
       code_challenge, code_challenge_method,
-    } = koa.query as Record<string, string>
+    } = query
 
     if (response_type !== 'code') {
-      koa.status = 400
-      koa.body = { error: 'unsupported_response_type' }
-      return
+      return Response.json({ error: 'unsupported_response_type' }, { status: 400 })
     }
 
     const client = await validateClient(client_id)
     if (!client) {
-      koa.status = 400
-      koa.body = { error: 'invalid_client' }
-      return
+      return Response.json({ error: 'invalid_client' }, { status: 400 })
     }
 
     if (!validateRedirectUri(client, redirect_uri)) {
-      koa.status = 400
-      koa.body = { error: 'invalid_redirect_uri' }
-      return
+      return Response.json({ error: 'invalid_redirect_uri' }, { status: 400 })
     }
 
-    // Authenticate user via Sso session
-    const token = koa.headers.authorization?.replace('Bearer ', '')
+    const token = getToken(req)
     const user = token ? await sso.validateSession(token) : null
     if (!user) {
-      // Redirect to login (or return 401 for API clients)
-      koa.status = 401
-      koa.body = { error: 'login_required' }
-      return
+      return Response.json({ error: 'login_required' }, { status: 401 })
     }
 
-    // Issue authorization code
-    const code = Random.id(32, 36)
+    const code = randomUUID()
     await ctx.model.create('oauth_code', {
       code,
       clientId: client_id,
@@ -167,71 +164,51 @@ export function apply(ctx: Context, config: Config = {}) {
 
     const params = new URLSearchParams({ code })
     if (state) params.set('state', state)
-    koa.redirect(`${redirect_uri}?${params}`)
+    return Response.redirect(`${redirect_uri}?${params}`)
   })
 
-  // POST /oauth/token — Token endpoint
-  ctx.server.post('/oauth/token', async (koa) => {
-    const body = koa.request.body as Record<string, string>
+  // POST /oauth/token
+  ctx.server.post('/oauth/token', async (req) => {
+    const body = await req.json() as Record<string, string>
     const { grant_type } = body
 
     if (grant_type === 'authorization_code') {
       const { code, client_id, client_secret, redirect_uri, code_verifier } = body
 
-      // Validate client
       const client = await validateClient(client_id, client_secret)
-      // Allow public clients (no secret) when using PKCE
       const publicClient = !client_secret ? await validateClient(client_id) : null
       const validClient = client ?? publicClient
       if (!validClient) {
-        koa.status = 401
-        koa.body = { error: 'invalid_client' }
-        return
+        return Response.json({ error: 'invalid_client' }, { status: 401 })
       }
 
-      // Validate code
       const [authCode] = await ctx.model.get('oauth_code', { code })
       if (!authCode || authCode.clientId !== client_id) {
-        koa.status = 400
-        koa.body = { error: 'invalid_grant' }
-        return
+        return Response.json({ error: 'invalid_grant' }, { status: 400 })
       }
 
-      // Check expiry
       if (authCode.expiresAt < new Date()) {
         await ctx.model.remove('oauth_code', { code })
-        koa.status = 400
-        koa.body = { error: 'invalid_grant', error_description: 'code expired' }
-        return
+        return Response.json({ error: 'invalid_grant', error_description: 'code expired' }, { status: 400 })
       }
 
-      // Check redirect_uri
       if (authCode.redirectUri !== redirect_uri) {
-        koa.status = 400
-        koa.body = { error: 'invalid_grant', error_description: 'redirect_uri mismatch' }
-        return
+        return Response.json({ error: 'invalid_grant', error_description: 'redirect_uri mismatch' }, { status: 400 })
       }
 
-      // PKCE verification
       if (authCode.codeChallenge) {
         if (!code_verifier) {
-          koa.status = 400
-          koa.body = { error: 'invalid_grant', error_description: 'code_verifier required' }
-          return
+          return Response.json({ error: 'invalid_grant', error_description: 'code_verifier required' }, { status: 400 })
         }
         if (!verifyPKCE(authCode.codeChallenge, authCode.codeChallengeMethod ?? 'plain', code_verifier)) {
-          koa.status = 400
-          koa.body = { error: 'invalid_grant', error_description: 'PKCE verification failed' }
-          return
+          return Response.json({ error: 'invalid_grant', error_description: 'PKCE verification failed' }, { status: 400 })
         }
       }
 
-      // Consume code
       await ctx.model.remove('oauth_code', { code })
 
-      // Issue tokens
-      const accessToken = Random.id(32, 36)
-      const refreshToken = Random.id(32, 36)
+      const accessToken = randomUUID()
+      const refreshToken = randomUUID()
       const now = new Date()
 
       await ctx.model.create('oauth_token', {
@@ -244,35 +221,30 @@ export function apply(ctx: Context, config: Config = {}) {
         createdAt: now,
       })
 
-      koa.body = {
+      return Response.json({
         access_token: accessToken,
         token_type: 'Bearer',
         expires_in: tokenLifetime,
         refresh_token: refreshToken,
         scope: authCode.scope,
-      }
+      })
     } else if (grant_type === 'refresh_token') {
       const { refresh_token, client_id, client_secret } = body
 
       const client = await validateClient(client_id, client_secret)
       if (!client) {
-        koa.status = 401
-        koa.body = { error: 'invalid_client' }
-        return
+        return Response.json({ error: 'invalid_client' }, { status: 401 })
       }
 
       const [existing] = await ctx.model.get('oauth_token', { refreshToken: refresh_token })
       if (!existing || existing.clientId !== client_id) {
-        koa.status = 400
-        koa.body = { error: 'invalid_grant' }
-        return
+        return Response.json({ error: 'invalid_grant' }, { status: 400 })
       }
 
-      // Rotate tokens
       await ctx.model.remove('oauth_token', { accessToken: existing.accessToken })
 
-      const accessToken = Random.id(32, 36)
-      const refreshToken = Random.id(32, 36)
+      const accessToken = randomUUID()
+      const refreshToken = randomUUID()
       const now = new Date()
 
       await ctx.model.create('oauth_token', {
@@ -285,65 +257,55 @@ export function apply(ctx: Context, config: Config = {}) {
         createdAt: now,
       })
 
-      koa.body = {
+      return Response.json({
         access_token: accessToken,
         token_type: 'Bearer',
         expires_in: tokenLifetime,
         refresh_token: refreshToken,
         scope: existing.scope,
-      }
+      })
     } else {
-      koa.status = 400
-      koa.body = { error: 'unsupported_grant_type' }
+      return Response.json({ error: 'unsupported_grant_type' }, { status: 400 })
     }
   })
 
-  // GET /oauth/userinfo — UserInfo endpoint (OpenID Connect compatible)
-  ctx.server.get('/oauth/userinfo', async (koa) => {
-    const token = koa.headers.authorization?.replace('Bearer ', '')
+  // GET /oauth/userinfo
+  ctx.server.get('/oauth/userinfo', async (req) => {
+    const token = getToken(req)
     if (!token) {
-      koa.status = 401
-      koa.body = { error: 'invalid_token' }
-      return
+      return Response.json({ error: 'invalid_token' }, { status: 401 })
     }
 
     const [oauthToken] = await ctx.model.get('oauth_token', { accessToken: token })
     if (!oauthToken || oauthToken.expiresAt < new Date()) {
-      koa.status = 401
-      koa.body = { error: 'invalid_token' }
-      return
+      return Response.json({ error: 'invalid_token' }, { status: 401 })
     }
 
     const user = await sso.getUser(oauthToken.userId)
     if (!user) {
-      koa.status = 401
-      koa.body = { error: 'invalid_token' }
-      return
+      return Response.json({ error: 'invalid_token' }, { status: 401 })
     }
 
-    koa.body = {
+    return Response.json({
       sub: String(user.id),
       name: user.name,
       updated_at: user.updatedAt ? Math.floor(user.updatedAt.getTime() / 1000) : undefined,
-    }
+    })
   })
 
-  // POST /oauth/revoke — Token revocation
-  ctx.server.post('/oauth/revoke', async (koa) => {
-    const { token: revokeToken } = koa.request.body as Record<string, string>
+  // POST /oauth/revoke
+  ctx.server.post('/oauth/revoke', async (req) => {
+    const body = await req.json() as Record<string, string>
+    const { token: revokeToken } = body
     if (!revokeToken) {
-      koa.status = 400
-      koa.body = { error: 'invalid_request' }
-      return
+      return Response.json({ error: 'invalid_request' }, { status: 400 })
     }
 
-    // Try as access token
     const removed = await ctx.model.remove('oauth_token', { accessToken: revokeToken })
     if (!removed.matched) {
-      // Try as refresh token
       await ctx.model.remove('oauth_token', { refreshToken: revokeToken })
     }
 
-    koa.body = {}
+    return Response.json({})
   })
 }

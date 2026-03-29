@@ -1,5 +1,6 @@
 import { Context } from 'cordis'
 import type { SsoProvider } from '@cordisjs/plugin-sso'
+import type {} from '@cordisjs/plugin-server'
 import type {} from 'minato'
 
 declare module 'minato' {
@@ -282,12 +283,11 @@ export interface Config {
 }
 
 const builtinPresets: Record<string, OAuthPreset> = {
-  github, google, microsoft, discord, gitlab,
-  facebook, linkedin, slack, gitee, dingtalk, weibo, feishu,
+  github, google, microsoft, discord, gitlab, facebook, linkedin, slack, gitee, dingtalk, weibo, feishu,
 }
 
 export const name = 'sso-oauth'
-export const inject = ['sso', 'sso.server']
+export const inject = ['sso', 'server']
 export const reusable = true
 
 export function apply(ctx: Context, config: Config) {
@@ -353,7 +353,7 @@ export function apply(ctx: Context, config: Config) {
     if (redirectUri) body.redirect_uri = redirectUri
 
     // Lark needs app_access_token instead of client_secret
-    let headers: Record<string, string> = {
+    const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
     }
@@ -482,21 +482,24 @@ export function apply(ctx: Context, config: Config) {
   }
 
   // Register callback route
-  ctx['sso.server'].route('get', `/callback/${providerName}`, async (routeCtx) => {
-    const { code, state } = routeCtx.query
-    const result = await provider.resolve!({ code, state, redirect_uri: routeCtx.query.redirect_uri })
+  ctx.server.get(`/sso/callback/${providerName}`, async (req) => {
+    const url = new URL(req.url, 'http://localhost')
+    const code = url.searchParams.get('code')!
+    const state = url.searchParams.get('state')!
+    const redirect_uri = url.searchParams.get('redirect_uri')!
+    const result = await provider.resolve!({ code, state, redirect_uri })
     if (result) {
       const identity = await ctx.sso.getIdentity(result.identityId)
       const token = await ctx.sso.createSession(identity!.userId, identity!.id)
-      return { token }
+      return Response.json({ token })
     }
     if (provider.autoRegister) {
       const { user, identityId } = await ctx.sso.createUser(providerName)
-      await provider.register!({ identityId, code, redirect_uri: routeCtx.query.redirect_uri })
+      await provider.register!({ identityId, code, redirect_uri })
       const token = await ctx.sso.createSession(user.id, identityId)
-      return { token }
+      return Response.json({ token })
     }
-    return { error: 'ACCOUNT_NOT_FOUND' }
+    return Response.json({ error: 'ACCOUNT_NOT_FOUND' }, { status: 401 })
   })
 
   ctx.sso.register(provider)

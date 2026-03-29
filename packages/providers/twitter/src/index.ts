@@ -2,6 +2,7 @@ import { Context } from 'cordis'
 import { createHash, randomBytes } from 'node:crypto'
 import type {} from 'minato'
 import type { SsoProvider } from '@cordisjs/plugin-sso'
+import type {} from '@cordisjs/plugin-server'
 
 declare module 'minato' {
   interface Tables {
@@ -27,7 +28,7 @@ export interface Config {
 }
 
 export const name = 'sso-twitter'
-export const inject = ['sso', 'sso.server']
+export const inject = ['sso', 'server']
 
 interface PKCEChallenge {
   codeVerifier: string
@@ -190,21 +191,23 @@ export function apply(ctx: Context, config: Config) {
     },
   }
 
-  ctx['sso.server'].route('get', '/callback/twitter', async (routeCtx) => {
-    const { code, state } = routeCtx.query
+  ctx.server.get('/sso/callback/twitter', async (req) => {
+    const url = new URL(req.url, 'http://localhost')
+    const code = url.searchParams.get('code')!
+    const state = url.searchParams.get('state')!
     const result = await provider.resolve!({ code, state })
     if (result) {
       const identity = await ctx.sso.getIdentity(result.identityId)
       const token = await ctx.sso.createSession(identity!.userId, identity!.id)
-      return { token }
+      return Response.json({ token })
     }
     if (provider.autoRegister) {
       const { user, identityId } = await ctx.sso.createUser('twitter')
       await provider.register!({ identityId, code, state })
       const token = await ctx.sso.createSession(user.id, identityId)
-      return { token }
+      return Response.json({ token })
     }
-    return { error: 'ACCOUNT_NOT_FOUND' }
+    return Response.json({ error: 'ACCOUNT_NOT_FOUND' }, { status: 401 })
   })
 
   ctx.sso.register(provider)

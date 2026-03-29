@@ -1,6 +1,6 @@
 import { Context, Inject, Service } from 'cordis'
 import type {} from 'minato'
-import * as uuid from 'uuid'
+import { randomUUID } from 'node:crypto'
 
 declare module 'cordis' {
   interface Context {
@@ -54,27 +54,6 @@ export interface Session {
   expiresAt: Date
 }
 
-export interface SsoProvider {
-  name: string
-  interactive: boolean
-  autoRegister: boolean
-
-  /** Resolve credentials to an existing identity. */
-  resolve?(credentials: any): Promise<{ identityId: number; data?: any } | null>
-
-  /** Register a new identity. Provider should create its own table row using the returned identityId. */
-  register?(credentials: any): Promise<{ data?: any }>
-
-  /** Get OAuth authorization URL. */
-  getAuthUrl?(redirectUri: string, state: string): string
-
-  /** Initiate a challenge (e.g. send verification code). */
-  challenge?(target: any): Promise<{ challengeId: string }>
-
-  /** Verify a challenge response. */
-  verify?(challengeId: string, response: string): Promise<boolean>
-}
-
 export namespace Sso {
   export interface Config {
     sessionMaxAge?: number
@@ -89,8 +68,6 @@ export namespace Sso {
 
 @Inject('database')
 export class Sso extends Service {
-  static inject = ['minato']
-
   private _providers = new Map<string, SsoProvider>()
 
   constructor(ctx: Context, public config: Sso.Config = {}) {
@@ -203,7 +180,7 @@ export class Sso extends Service {
   async createSession(userId: number, identityId: number): Promise<string> {
     const now = new Date()
     const maxAge = this.config.sessionMaxAge ?? 7 * 24 * 60 * 60 * 1000 // 7 days
-    const token = uuid.v4()
+    const token = randomUUID()
     await this.ctx.database.create('sso_session', {
       token,
       userId,

@@ -1,8 +1,12 @@
 import { Context } from 'cordis'
-import { Random } from 'cosmokit'
+import { randomBytes, randomUUID } from 'node:crypto'
 import type {} from 'minato'
 import type { SsoProvider } from '@cordisjs/plugin-sso'
 import type {} from '@cordisjs/sms'
+
+function randomDigits(length: number): string {
+  return Array.from(randomBytes(length), b => (b % 10).toString()).join('')
+}
 
 declare module 'minato' {
   interface Tables {
@@ -65,8 +69,8 @@ export function apply(ctx: Context, config: Config = {}) {
       const { phone } = target
       if (!phone) throw new Error('phone required')
 
-      const code = Random.id(codeLength, 10)
-      const challengeId = Random.id(32, 36)
+      const code = randomDigits(codeLength)
+      const challengeId = randomUUID()
 
       challenges.set(challengeId, {
         phone,

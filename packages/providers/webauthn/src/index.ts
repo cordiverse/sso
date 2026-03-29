@@ -39,7 +39,7 @@ export interface Config {
 }
 
 export const name = 'sso-webauthn'
-export const inject = ['sso', 'sso.server']
+export const inject = ['sso']
 
 interface PendingChallenge {
   challenge: string

@@ -2,181 +2,141 @@ import { Context } from 'cordis'
 import type { Sso } from '@cordisjs/plugin-sso'
 import type {} from '@cordisjs/plugin-server'
 
-declare module 'cordis' {
-  interface Context {
-    'sso.server': SsoServer
-  }
-}
-
-export interface SsoServer {
-  route(method: 'get' | 'post' | 'put' | 'delete', path: string, handler: RouteHandler): void
-}
-
-export type RouteHandler = (ctx: RouteContext) => Promise<any>
-
-export interface RouteContext {
-  /** Raw request */
-  request: any
-  /** Session token from Authorization header (if present) */
-  token?: string
-  /** Request body (parsed JSON) */
-  body?: any
-  /** URL params */
-  params: Record<string, string>
-  /** Query string params */
-  query: Record<string, string>
-}
-
 export const name = 'sso-server'
 export const inject = ['sso', 'server']
 
 export function apply(ctx: Context) {
-  const sso: Sso = ctx.sso
-
-  // Provide sso.server sub-service
-  const server: SsoServer = {
-    route(method, path, handler) {
-      const fullPath = `/sso${path}`
-      ctx.server[method](fullPath, async (koa) => {
-        const token = extractToken(koa.request.headers.authorization)
-        const routeCtx: RouteContext = {
-          request: koa.request,
-          token,
-          body: koa.request.body,
-          params: koa.params ?? {},
-          query: koa.query ?? {},
-        }
-        try {
-          const result = await handler(routeCtx)
-          koa.body = result ?? { ok: true }
-        } catch (error: any) {
-          koa.status = error.status ?? 400
-          koa.body = { error: error.code ?? error.message }
-        }
-      })
-    },
-  }
-
-  ctx.provide('sso.server', server)
-
   // List available providers
-  server.route('get', '/providers', async () => {
-    return sso.getProviders().map((p) => ({
+  ctx.server.get('/sso/providers', async () => {
+    return Response.json(ctx.sso.getProviders().map((p) => ({
       name: p.name,
       interactive: p.interactive,
       autoRegister: p.autoRegister,
-    }))
+    })))
   })
 
   // Login via credentials
-  server.route('post', '/auth/:provider', async ({ params, body, request }) => {
-    const provider = sso.getProvider(params.provider)
-    if (!provider) throw createError(404, 'PROVIDER_NOT_FOUND')
-    if (!provider.resolve) throw createError(400, 'RESOLVE_NOT_SUPPORTED')
+  ctx.server.post('/sso/auth/:provider', async (req) => {
+    const provider = ctx.sso.getProvider(req.params.provider)
+    if (!provider) return errorResponse(404, 'PROVIDER_NOT_FOUND')
+    if (!provider.resolve) return errorResponse(400, 'RESOLVE_NOT_SUPPORTED')
 
-    // Hook: sso/auth waterfall (captcha, rate limit, audit, etc.)
-    await ctx.waterfall('sso/auth', { provider: params.provider, credentials: body, request })
+    const body = await safeJson(req)
+    await ctx.waterfall('sso/auth', { provider: req.params.provider, credentials: body, request: req })
 
     const result = await provider.resolve(body)
     if (!result) {
       if (provider.autoRegister && provider.register) {
-        return handleRegister(sso, provider, body)
+        return Response.json(await handleRegister(ctx.sso, provider, body))
       }
-      throw createError(401, 'ACCOUNT_NOT_FOUND')
+      return errorResponse(401, 'ACCOUNT_NOT_FOUND')
     }
 
-    const identity = await sso.getIdentity(result.identityId)
-    if (!identity) throw createError(500, 'IDENTITY_NOT_FOUND')
+    const identity = await ctx.sso.getIdentity(result.identityId)
+    if (!identity) return errorResponse(500, 'IDENTITY_NOT_FOUND')
 
-    const token = await sso.createSession(identity.userId, identity.id)
-    return { token }
+    const token = await ctx.sso.createSession(identity.userId, identity.id)
+    return Response.json({ token })
   })
 
   // Register
-  server.route('post', '/register/:provider', async ({ params, body }) => {
-    const provider = sso.getProvider(params.provider)
-    if (!provider) throw createError(404, 'PROVIDER_NOT_FOUND')
-    return handleRegister(sso, provider, body)
+  ctx.server.post('/sso/register/:provider', async (req) => {
+    const provider = ctx.sso.getProvider(req.params.provider)
+    if (!provider) return errorResponse(404, 'PROVIDER_NOT_FOUND')
+    const body = await safeJson(req)
+    return Response.json(await handleRegister(ctx.sso, provider, body))
   })
 
   // Get OAuth URL
-  server.route('get', '/auth/:provider', async ({ params, query }) => {
-    const provider = sso.getProvider(params.provider)
-    if (!provider?.getAuthUrl) throw createError(400, 'OAUTH_NOT_SUPPORTED')
-    const redirectUri = query.redirect_uri ?? ''
-    const state = query.state ?? ''
-    const url = provider.getAuthUrl(redirectUri, state)
-    return { url }
+  ctx.server.get('/sso/auth/:provider', async (req) => {
+    const provider = ctx.sso.getProvider(req.params.provider)
+    if (!provider?.getAuthUrl) return errorResponse(400, 'OAUTH_NOT_SUPPORTED')
+    const url = new URL(req.url, 'http://localhost')
+    const redirectUri = url.searchParams.get('redirect_uri') ?? ''
+    const state = url.searchParams.get('state') ?? ''
+    const authUrl = provider.getAuthUrl(redirectUri, state)
+    return Response.json({ url: authUrl })
   })
 
-  // OAuth callback
-  server.route('get', '/callback/:provider', async ({ params, query }) => {
-    const provider = sso.getProvider(params.provider)
-    if (!provider?.resolve) throw createError(404, 'PROVIDER_NOT_FOUND')
+  // OAuth callback (generic fallback)
+  ctx.server.get('/sso/callback/:provider', async (req) => {
+    const url = new URL(req.url, 'http://localhost')
+    const query: Record<string, string> = {}
+    url.searchParams.forEach((v, k) => { query[k] = v })
+
+    const provider = ctx.sso.getProvider(req.params.provider)
+    if (!provider?.resolve) return errorResponse(404, 'PROVIDER_NOT_FOUND')
     const result = await provider.resolve(query)
     if (!result) {
       if (provider.autoRegister && provider.register) {
-        return handleRegister(sso, provider, query)
+        return Response.json(await handleRegister(ctx.sso, provider, query))
       }
-      throw createError(401, 'ACCOUNT_NOT_FOUND')
+      return errorResponse(401, 'ACCOUNT_NOT_FOUND')
     }
-    const identity = await sso.getIdentity(result.identityId)
-    if (!identity) throw createError(500, 'IDENTITY_NOT_FOUND')
-    const token = await sso.createSession(identity.userId, identity.id)
-    return { token }
+    const identity = await ctx.sso.getIdentity(result.identityId)
+    if (!identity) return errorResponse(500, 'IDENTITY_NOT_FOUND')
+    const token = await ctx.sso.createSession(identity.userId, identity.id)
+    return Response.json({ token })
   })
 
   // Challenge (e.g. send verification code)
-  server.route('post', '/challenge/:provider', async ({ params, body }) => {
-    const provider = sso.getProvider(params.provider)
-    if (!provider?.challenge) throw createError(400, 'CHALLENGE_NOT_SUPPORTED')
+  ctx.server.post('/sso/challenge/:provider', async (req) => {
+    const provider = ctx.sso.getProvider(req.params.provider)
+    if (!provider?.challenge) return errorResponse(400, 'CHALLENGE_NOT_SUPPORTED')
+    const body = await safeJson(req)
     const result = await provider.challenge(body)
-    return result
+    return Response.json(result)
   })
 
   // Verify challenge
-  server.route('post', '/verify/:provider', async ({ params, body }) => {
-    const provider = sso.getProvider(params.provider)
-    if (!provider?.verify) throw createError(400, 'VERIFY_NOT_SUPPORTED')
+  ctx.server.post('/sso/verify/:provider', async (req) => {
+    const provider = ctx.sso.getProvider(req.params.provider)
+    if (!provider?.verify) return errorResponse(400, 'VERIFY_NOT_SUPPORTED')
+    const body = await safeJson(req)
     const { challengeId, response } = body
     const ok = await provider.verify(challengeId, response)
-    if (!ok) throw createError(401, 'VERIFICATION_FAILED')
-    // After verification, provider should have resolved an identity
-    // The actual session creation depends on the provider's flow
-    return { ok: true }
+    if (!ok) return errorResponse(401, 'VERIFICATION_FAILED')
+    return Response.json({ ok: true })
   })
 
   // Link a new provider (requires session)
-  server.route('post', '/link/:provider', async ({ params, token }) => {
-    const user = await requireSession(sso, token)
-    const provider = sso.getProvider(params.provider)
-    if (!provider) throw createError(404, 'PROVIDER_NOT_FOUND')
-    const { identityId } = await sso.link(user.id, params.provider)
-    return { identityId }
+  ctx.server.post('/sso/link/:provider', async (req) => {
+    const token = extractToken(req)
+    const user = await requireSession(ctx.sso, token)
+    if (!user) return errorResponse(401, 'SESSION_REQUIRED')
+    const provider = ctx.sso.getProvider(req.params.provider)
+    if (!provider) return errorResponse(404, 'PROVIDER_NOT_FOUND')
+    const { identityId } = await ctx.sso.link(user.id, req.params.provider)
+    return Response.json({ identityId })
   })
 
   // Unlink an identity (requires session)
-  server.route('post', '/unlink/:id', async ({ params, token }) => {
-    const user = await requireSession(sso, token)
-    const identityId = parseInt(params.id)
-    const identity = await sso.getIdentity(identityId)
+  ctx.server.post('/sso/unlink/:id', async (req) => {
+    const token = extractToken(req)
+    const user = await requireSession(ctx.sso, token)
+    if (!user) return errorResponse(401, 'SESSION_REQUIRED')
+    const identityId = parseInt(req.params.id)
+    const identity = await ctx.sso.getIdentity(identityId)
     if (!identity || identity.userId !== user.id) {
-      throw createError(404, 'IDENTITY_NOT_FOUND')
+      return errorResponse(404, 'IDENTITY_NOT_FOUND')
     }
-    await sso.unlink(identityId)
-    return { ok: true }
+    await ctx.sso.unlink(identityId)
+    return Response.json({ ok: true })
   })
 
   // List current user's identities (requires session)
-  server.route('get', '/identities', async ({ token }) => {
-    const user = await requireSession(sso, token)
-    return sso.getIdentities(user.id)
+  ctx.server.get('/sso/identities', async (req) => {
+    const token = extractToken(req)
+    const user = await requireSession(ctx.sso, token)
+    if (!user) return errorResponse(401, 'SESSION_REQUIRED')
+    return Response.json(await ctx.sso.getIdentities(user.id))
   })
 
   // Logout
-  server.route('post', '/logout', async ({ token }) => {
-    if (token) await sso.destroySession(token)
-    return { ok: true }
+  ctx.server.post('/sso/logout', async (req) => {
+    const token = extractToken(req)
+    if (token) await ctx.sso.destroySession(token)
+    return Response.json({ ok: true })
   })
 }
 
@@ -189,16 +149,19 @@ async function handleRegister(sso: Sso, provider: any, credentials: any) {
 }
 
 async function requireSession(sso: Sso, token?: string) {
-  if (!token) throw createError(401, 'SESSION_REQUIRED')
-  const user = await sso.validateSession(token)
-  if (!user) throw createError(401, 'SESSION_INVALID')
-  return user
+  if (!token) return null
+  return sso.validateSession(token)
 }
 
-function extractToken(header?: string): string | undefined {
+function extractToken(req: Request): string | undefined {
+  const header = req.headers.get('authorization')
   if (!header) return
   const [type, token] = header.split(' ')
   if (type.toLowerCase() === 'bearer') return token
+}
+
+async function safeJson(req: Request): Promise<any> {
+  try { return await req.json() } catch { return {} }
 }
 
 function createError(status: number, code: string) {
@@ -206,4 +169,8 @@ function createError(status: number, code: string) {
   error.status = status
   error.code = code
   return error
+}
+
+function errorResponse(status: number, code: string) {
+  return Response.json({ error: code }, { status })
 }

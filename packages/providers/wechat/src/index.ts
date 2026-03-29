@@ -1,5 +1,6 @@
 import { Context } from 'cordis'
 import type { SsoProvider } from '@cordisjs/plugin-sso'
+import type {} from '@cordisjs/plugin-server'
 import type {} from 'minato'
 
 declare module 'minato' {
@@ -26,7 +27,7 @@ export interface Config {
 }
 
 export const name = 'sso-wechat'
-export const inject = ['sso', 'sso.server']
+export const inject = ['sso', 'server']
 
 export function apply(ctx: Context, config: Config) {
   ctx.model.extend('sso_wechat', {
@@ -128,21 +129,23 @@ export function apply(ctx: Context, config: Config) {
     },
   }
 
-  ctx['sso.server'].route('get', '/callback/wechat', async (routeCtx) => {
-    const { code, state } = routeCtx.query
+  ctx.server.get('/sso/callback/wechat', async (req) => {
+    const url = new URL(req.url, 'http://localhost')
+    const code = url.searchParams.get('code')!
+    const state = url.searchParams.get('state')!
     const result = await provider.resolve!({ code, state })
     if (result) {
       const identity = await ctx.sso.getIdentity(result.identityId)
       const token = await ctx.sso.createSession(identity!.userId, identity!.id)
-      return { token }
+      return Response.json({ token })
     }
     if (provider.autoRegister) {
       const { user, identityId } = await ctx.sso.createUser('wechat')
       await provider.register!({ identityId, code })
       const token = await ctx.sso.createSession(user.id, identityId)
-      return { token }
+      return Response.json({ token })
     }
-    return { error: 'ACCOUNT_NOT_FOUND' }
+    return Response.json({ error: 'ACCOUNT_NOT_FOUND' }, { status: 401 })
   })
 
   ctx.sso.register(provider)

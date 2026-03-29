@@ -1,5 +1,6 @@
 import { Context } from 'cordis'
-import type { Sso, SsoProvider } from '@cordisjs/plugin-sso'
+import type { SsoProvider } from '@cordisjs/plugin-sso'
+import type {} from '@cordisjs/plugin-server'
 import type {} from 'minato'
 
 declare module 'minato' {
@@ -25,7 +26,7 @@ export interface Config {
 }
 
 export const name = 'sso-qq'
-export const inject = ['sso', 'sso.server']
+export const inject = ['sso', 'server']
 
 // QQ API returns JSONP-like format: callback( {"key":"value"} );
 function parseCallback(text: string): any {
@@ -156,21 +157,24 @@ export function apply(ctx: Context, config: Config) {
     },
   }
 
-  ctx['sso.server'].route('get', '/callback/qq', async (routeCtx) => {
-    const { code, state } = routeCtx.query
-    const result = await provider.resolve!({ code, state, redirect_uri: routeCtx.query.redirect_uri })
+  ctx.server.get('/sso/callback/qq', async (req) => {
+    const url = new URL(req.url, 'http://localhost')
+    const code = url.searchParams.get('code')!
+    const state = url.searchParams.get('state')!
+    const redirect_uri = url.searchParams.get('redirect_uri')!
+    const result = await provider.resolve!({ code, state, redirect_uri })
     if (result) {
       const identity = await ctx.sso.getIdentity(result.identityId)
       const token = await ctx.sso.createSession(identity!.userId, identity!.id)
-      return { token }
+      return Response.json({ token })
     }
     if (provider.autoRegister) {
       const { user, identityId } = await ctx.sso.createUser('qq')
-      await provider.register!({ identityId, code, redirect_uri: routeCtx.query.redirect_uri })
+      await provider.register!({ identityId, code, redirect_uri })
       const token = await ctx.sso.createSession(user.id, identityId)
-      return { token }
+      return Response.json({ token })
     }
-    return { error: 'ACCOUNT_NOT_FOUND' }
+    return Response.json({ error: 'ACCOUNT_NOT_FOUND' }, { status: 401 })
   })
 
   ctx.sso.register(provider)
