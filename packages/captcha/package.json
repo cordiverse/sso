@@ -10,10 +10,10 @@
   ],
   "peerDependencies": {
     "@cordisjs/plugin-sso": "^0.1.0",
-    "cordis": "^4.0.0-rc.0"
+    "cordis": "^4.0.0-rc.4"
   },
   "devDependencies": {
     "@cordisjs/plugin-sso": "^0.1.0",
-    "cordis": "^4.0.0-rc.0"
+    "cordis": "^4.0.0-rc.4"
   }
 }

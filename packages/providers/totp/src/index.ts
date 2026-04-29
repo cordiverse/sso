@@ -1,9 +1,9 @@
 import { Context } from 'cordis'
 import { createHmac, randomBytes } from 'node:crypto'
-import type {} from 'minato'
+import type {} from '@cordisjs/plugin-database'
 import { SsoProvider } from '@cordisjs/plugin-sso'
 
-declare module 'minato' {
+declare module '@cordisjs/plugin-database' {
   interface Tables {
     sso_totp: SsoTotp
   }

@@ -1,13 +1,13 @@
 import { Context } from 'cordis'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { SsoProvider } from '@cordisjs/plugin-sso'
-import type {} from 'minato'
+import type {} from '@cordisjs/plugin-database'
 
 function randomDigits(length: number): string {
   return Array.from(randomBytes(length), b => (b % 10).toString()).join('')
 }
 
-declare module 'minato' {
+declare module '@cordisjs/plugin-database' {
   interface Tables {
     sso_mail: SsoMail
   }

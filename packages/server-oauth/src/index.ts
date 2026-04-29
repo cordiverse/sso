@@ -1,10 +1,10 @@
 import { Context } from 'cordis'
-import type {} from 'minato'
+import type {} from '@cordisjs/plugin-database'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Sso } from '@cordisjs/plugin-sso'
 import type { Request } from '@cordisjs/plugin-server'
 
-declare module 'minato' {
+declare module '@cordisjs/plugin-database' {
   interface Tables {
     oauth_client: OAuthClient
     oauth_code: OAuthCode

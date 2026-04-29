@@ -2,9 +2,9 @@ import { Context, Inject } from 'cordis'
 import { createHash, randomBytes } from 'node:crypto'
 import { SsoProvider } from '@cordisjs/plugin-sso'
 import type {} from '@cordisjs/plugin-server'
-import type {} from 'minato'
+import type {} from '@cordisjs/plugin-database'
 
-declare module 'minato' {
+declare module '@cordisjs/plugin-database' {
   interface Tables {
     sso_twitter: SsoTwitter
   }

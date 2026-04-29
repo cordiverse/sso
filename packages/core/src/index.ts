@@ -1,5 +1,5 @@
 import { Context, Inject, Service } from 'cordis'
-import type {} from 'minato'
+import type {} from '@cordisjs/plugin-database'
 import { randomUUID } from 'node:crypto'
 
 declare module 'cordis' {
@@ -12,7 +12,7 @@ declare module 'cordis' {
   }
 }
 
-declare module 'minato' {
+declare module '@cordisjs/plugin-database' {
   interface Tables {
     user: User
     sso_identity: Identity
@@ -29,7 +29,7 @@ export abstract class SsoProvider {
 
   constructor(public ctx: Context) {}
 
-  *[Service.init]() {
+  * [Service.init]() {
     yield this.ctx.sso.register(this)
   }
 

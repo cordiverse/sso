@@ -1,6 +1,3 @@
-- name: '@cordisjs/plugin-cli'
-  config:
-    name: yakumo
 - name: yakumo
 - name: yakumo-tsc
 - name: yakumo-esbuild

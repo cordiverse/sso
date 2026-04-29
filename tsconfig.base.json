@@ -11,10 +11,9 @@
     "esModuleInterop": true,
     "allowImportingTsExtensions": true,
     "strict": true,
-    "noImplicitAny": false,
     "types": [
       "node",
-      "yml-register/types",
+      "@cordisjs/unyaml/types",
     ],
   },
 }

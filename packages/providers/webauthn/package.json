@@ -9,16 +9,16 @@
     "lib"
   ],
   "peerDependencies": {
+    "@cordisjs/plugin-database": "^4.0.1",
     "@cordisjs/plugin-sso": "^0.1.0",
-    "cordis": "^4.0.0-rc.0",
-    "minato": "^4.0.0-alpha.0"
+    "cordis": "^4.0.0-rc.4"
   },
   "dependencies": {
     "@simplewebauthn/server": "^13.3.0"
   },
   "devDependencies": {
+    "@cordisjs/plugin-database": "^4.0.1",
     "@cordisjs/plugin-sso": "^0.1.0",
-    "cordis": "^4.0.0-rc.0",
-    "minato": "^4.0.0-alpha.0"
+    "cordis": "^4.0.0-rc.4"
   }
 }

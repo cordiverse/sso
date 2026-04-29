@@ -10,9 +10,9 @@ import {
   type AuthenticationResponseJSON,
 } from '@simplewebauthn/server'
 import { SsoProvider } from '@cordisjs/plugin-sso'
-import type {} from 'minato'
+import type {} from '@cordisjs/plugin-database'
 
-declare module 'minato' {
+declare module '@cordisjs/plugin-database' {
   interface Tables {
     sso_webauthn: SsoWebAuthn
   }

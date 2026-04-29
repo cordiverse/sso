@@ -9,9 +9,9 @@
     "lib"
   ],
   "peerDependencies": {
-    "cordis": "^4.0.0-rc.0"
+    "cordis": "^4.0.0-rc.4"
   },
   "devDependencies": {
-    "cordis": "^4.0.0-rc.0"
+    "cordis": "^4.0.0-rc.4"
   }
 }
