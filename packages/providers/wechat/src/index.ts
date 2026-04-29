@@ -47,7 +47,7 @@ export default class WeChatProvider extends SsoProvider {
     }, {
       primary: 'identityId',
       unique: [['openId']],
-      foreign: { identityId: ['sso_identity', 'id'] },
+      foreign: { identityId: ['sso.identity', 'id'] },
     })
 
     ctx.server.get('/sso/callback/wechat', async (req) => {

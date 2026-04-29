@@ -3,6 +3,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { SsoProvider } from '@cordisjs/plugin-sso'
 import type {} from '@cordisjs/plugin-server'
 import type {} from '@cordisjs/plugin-database'
+import type {} from '@cordisjs/plugin-timer'
 
 declare module '@cordisjs/plugin-database' {
   interface Tables {
@@ -57,7 +58,7 @@ export default class TwitterProvider extends SsoProvider {
     }, {
       primary: 'identityId',
       unique: [['twitterId']],
-      foreign: { identityId: ['sso_identity', 'id'] },
+      foreign: { identityId: ['sso.identity', 'id'] },
     })
 
     ctx.server.get('/sso/callback/twitter', async (req) => {
@@ -90,7 +91,7 @@ export default class TwitterProvider extends SsoProvider {
     const scope = this.config.scope ?? 'tweet.read users.read offline.access'
     const { codeVerifier, codeChallenge } = this.generatePKCE()
     this.challenges.set(state, { codeVerifier, state, redirectUri, expiresAt: Date.now() + 10 * 60 * 1000 })
-    this.ctx.setTimeout(() => this.challenges.delete(state), 10 * 60 * 1000)
+    this.ctx.timeout(() => this.challenges.delete(state), 10 * 60 * 1000)
     const params = new URLSearchParams({
       response_type: 'code',
       client_id: this.config.clientId,

@@ -294,7 +294,7 @@ export default class OAuthProvider extends SsoProvider {
     }, {
       primary: 'identityId',
       unique: [['provider', 'externalId']],
-      foreign: { identityId: ['sso_identity', 'id'] },
+      foreign: { identityId: ['sso.identity', 'id'] },
     })
 
     ctx.server.get(`/sso/callback/${this.name}`, async (req) => {

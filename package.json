@@ -12,10 +12,9 @@
   ],
   "license": "MIT",
   "scripts": {
-    "yakumo": "node --import tsx scripts/yakumo.js",
-    "build": "yarn yakumo esbuild && yarn yakumo tsc",
+    "build": "yakumo esbuild && yakumo tsc",
     "lint": "eslint --cache",
-    "test": "yarn yakumo mocha --import tsx",
+    "test": "yakumo mocha --import tsx",
     "test:text": "shx rm -rf coverage && c8 -r text yarn test",
     "test:json": "shx rm -rf coverage && c8 -r json yarn test",
     "test:html": "shx rm -rf coverage && c8 -r html yarn test"

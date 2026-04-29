@@ -1,6 +1,6 @@
 import { Context } from 'cordis'
 import type { Sso } from '@cordisjs/plugin-sso'
-import type {} from '@cordisjs/plugin-server'
+import { Request } from '@cordisjs/plugin-server'
 
 export const name = 'sso-server'
 export const inject = ['sso', 'server']
@@ -8,11 +8,7 @@ export const inject = ['sso', 'server']
 export function apply(ctx: Context) {
   // List available providers
   ctx.server.get('/sso/providers', async () => {
-    return Response.json(ctx.sso.getProviders().map((p) => ({
-      name: p.name,
-      interactive: p.interactive,
-      autoRegister: p.autoRegister,
-    })))
+    return Response.json(await ctx.sso.getProviderMetas())
   })
 
   // Login via credentials

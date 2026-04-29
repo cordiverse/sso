@@ -2,6 +2,7 @@ import { Context } from 'cordis'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { SsoProvider } from '@cordisjs/plugin-sso'
 import type {} from '@cordisjs/plugin-database'
+import type {} from '@cordisjs/plugin-timer'
 
 function randomDigits(length: number): string {
   return Array.from(randomBytes(length), b => (b % 10).toString()).join('')
@@ -56,7 +57,7 @@ export default class MailProvider extends SsoProvider {
     }, {
       primary: 'identityId',
       unique: [['email']],
-      foreign: { identityId: ['sso_identity', 'id'] },
+      foreign: { identityId: ['sso.identity', 'id'] },
     })
   }
 
@@ -73,7 +74,7 @@ export default class MailProvider extends SsoProvider {
       expiresAt: Date.now() + this.codeExpiry,
     })
 
-    this.ctx.setTimeout(() => this.challenges.delete(challengeId), this.codeExpiry)
+    this.ctx.timeout(() => this.challenges.delete(challengeId), this.codeExpiry)
     await this.send(email, code)
 
     return { challengeId }

@@ -2,6 +2,7 @@ import { Context, Inject } from 'cordis'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { SsoProvider } from '@cordisjs/plugin-sso'
 import type {} from '@cordisjs/plugin-database'
+import type {} from '@cordisjs/plugin-timer'
 import type {} from '@cordisjs/sms'
 
 function randomDigits(length: number): string {
@@ -58,7 +59,7 @@ export default class SmsProvider extends SsoProvider {
     }, {
       primary: 'identityId',
       unique: [['phone']],
-      foreign: { identityId: ['sso_identity', 'id'] },
+      foreign: { identityId: ['sso.identity', 'id'] },
     })
   }
 
@@ -75,7 +76,7 @@ export default class SmsProvider extends SsoProvider {
       expiresAt: Date.now() + this.codeExpiry,
     })
 
-    this.ctx.setTimeout(() => this.challenges.delete(challengeId), this.codeExpiry)
+    this.ctx.timeout(() => this.challenges.delete(challengeId), this.codeExpiry)
     const message = this.template.replace('{code}', code)
     await this.ctx.sms.send(phone, message)
 

@@ -1,16 +1,17 @@
 import { Context } from 'cordis'
 import { randomBytes } from 'node:crypto'
 import {
+  AuthenticationResponseJSON,
   generateAuthenticationOptions,
   generateRegistrationOptions,
+  RegistrationResponseJSON,
   verifyAuthenticationResponse,
   verifyRegistrationResponse,
-  type WebAuthnCredential,
-  type RegistrationResponseJSON,
-  type AuthenticationResponseJSON,
+  WebAuthnCredential,
 } from '@simplewebauthn/server'
 import { SsoProvider } from '@cordisjs/plugin-sso'
 import type {} from '@cordisjs/plugin-database'
+import type {} from '@cordisjs/plugin-timer'
 
 declare module '@cordisjs/plugin-database' {
   interface Tables {
@@ -70,7 +71,7 @@ export default class WebAuthnProvider extends SsoProvider {
     }, {
       primary: 'identityId',
       unique: [['credentialId']],
-      foreign: { identityId: ['sso_identity', 'id'] },
+      foreign: { identityId: ['sso.identity', 'id'] },
     })
   }
 
@@ -83,8 +84,6 @@ export default class WebAuthnProvider extends SsoProvider {
       id: r.credentialId,
       publicKey: Buffer.from(r.publicKey, 'base64'),
       counter: r.signCount,
-      deviceType: r.deviceType as 'singleDevice' | 'multiDevice',
-      backedUp: r.backedUp,
       transports: r.transports ? JSON.parse(r.transports) : undefined,
     }))
   }
@@ -109,7 +108,7 @@ export default class WebAuthnProvider extends SsoProvider {
         type: 'register',
         expiresAt: Date.now() + this.timeout,
       })
-      this.ctx.setTimeout(() => this.challenges.delete(challengeId), this.timeout)
+      this.ctx.timeout(() => this.challenges.delete(challengeId), this.timeout)
       return { challengeId, data: options }
     }
 
@@ -121,10 +120,12 @@ export default class WebAuthnProvider extends SsoProvider {
       userVerification: 'preferred',
     })
     this.challenges.set(challengeId, {
-      challenge: options.challenge, userId, type: 'authenticate',
+      challenge: options.challenge,
+      userId,
+      type: 'authenticate',
       expiresAt: Date.now() + this.timeout,
     })
-    this.ctx.setTimeout(() => this.challenges.delete(challengeId), this.timeout)
+    this.ctx.timeout(() => this.challenges.delete(challengeId), this.timeout)
     return { challengeId, data: options }
   }
 
@@ -173,8 +174,6 @@ export default class WebAuthnProvider extends SsoProvider {
         id: record.credentialId,
         publicKey: Buffer.from(record.publicKey, 'base64'),
         counter: record.signCount,
-        deviceType: record.deviceType as 'singleDevice' | 'multiDevice',
-        backedUp: record.backedUp,
         transports: record.transports ? JSON.parse(record.transports) : undefined,
       }
       const verification = await verifyAuthenticationResponse({

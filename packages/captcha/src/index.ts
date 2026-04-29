@@ -16,6 +16,14 @@ export interface Config {
   minScore?: number
 }
 
+declare module '@cordisjs/plugin-sso' {
+  namespace Sso {
+    interface ProviderMeta {
+      captcha?: { type: CaptchaType; siteKey: string } | null
+    }
+  }
+}
+
 const VERIFY_URLS: Record<CaptchaType, string> = {
   recaptcha: 'https://www.google.com/recaptcha/api/siteverify',
   hcaptcha: 'https://api.hcaptcha.com/siteverify',
@@ -28,9 +36,10 @@ export const inject = ['sso']
 export function apply(ctx: Context, config: Config) {
   const { type, secretKey, providers, minScore = 0.5 } = config
 
-  ctx.on('sso/auth', async (event: any) => {
-    // Check if this provider requires captcha
-    if (providers?.length && !providers.includes(event.provider)) return
+  const applies = (provider: string) => !providers?.length || providers.includes(provider)
+
+  ctx.on('sso/auth', async (event) => {
+    if (!applies(event.provider)) return
 
     const token = event.request?.headers?.['x-captcha-token']
       ?? event.credentials?.captchaToken
@@ -38,22 +47,14 @@ export function apply(ctx: Context, config: Config) {
       const error: any = new Error('CAPTCHA_REQUIRED')
       error.status = 400
       error.code = 'CAPTCHA_REQUIRED'
-      error.data = {
-        type: config.type,
-        siteKey: config.siteKey,
-      }
+      error.data = { type: config.type, siteKey: config.siteKey }
       throw error
     }
 
-    // Verify with provider
-    const verifyUrl = VERIFY_URLS[type]
-    const res = await fetch(verifyUrl, {
+    const res = await fetch(VERIFY_URLS[type], {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        secret: secretKey,
-        response: token,
-      }),
+      body: new URLSearchParams({ secret: secretKey, response: token }),
     })
     const data = await res.json() as any
 
@@ -61,32 +62,24 @@ export function apply(ctx: Context, config: Config) {
       const error: any = new Error('CAPTCHA_FAILED')
       error.status = 403
       error.code = 'CAPTCHA_FAILED'
-      error.data = {
-        errors: data['error-codes'],
-      }
+      error.data = { errors: data['error-codes'] }
       throw error
     }
 
-    // reCAPTCHA v3 score check
-    if (type === 'recaptcha' && typeof data.score === 'number') {
-      if (data.score < minScore) {
-        const error: any = new Error('CAPTCHA_SCORE_TOO_LOW')
-        error.status = 403
-        error.code = 'CAPTCHA_SCORE_TOO_LOW'
-        error.data = { score: data.score, minScore }
-        throw error
-      }
+    if (type === 'recaptcha' && typeof data.score === 'number' && data.score < minScore) {
+      const error: any = new Error('CAPTCHA_SCORE_TOO_LOW')
+      error.status = 403
+      error.code = 'CAPTCHA_SCORE_TOO_LOW'
+      error.data = { score: data.score, minScore }
+      throw error
     }
   })
 
-  // Expose captcha info in provider metadata for frontend
-  const originalGetProviders = ctx.sso.getProviders.bind(ctx.sso)
-  ctx.sso.getProviders = function () {
-    return originalGetProviders().map(p => ({
-      ...p,
-      captcha: (!providers?.length || providers.includes(p.name))
-        ? { type: config.type, siteKey: config.siteKey }
-        : null,
+  ctx.on('sso/provider-meta', async (_metas, next) => {
+    const metas = await next()
+    return metas.map((m) => ({
+      ...m,
+      captcha: applies(m.name) ? { type: config.type, siteKey: config.siteKey } : null,
     }))
-  }
+  })
 }

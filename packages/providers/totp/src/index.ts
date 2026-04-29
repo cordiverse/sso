@@ -102,7 +102,7 @@ export default class TotpProvider extends SsoProvider {
       verified: { type: 'boolean', initial: false },
     }, {
       primary: 'identityId',
-      foreign: { identityId: ['sso_identity', 'id'] },
+      foreign: { identityId: ['sso.identity', 'id'] },
     })
   }
 

@@ -46,7 +46,7 @@ export default class PasswordProvider extends SsoProvider {
     }, {
       primary: 'identityId',
       unique: [['username']],
-      foreign: { identityId: ['sso_identity', 'id'] },
+      foreign: { identityId: ['sso.identity', 'id'] },
     })
   }
 

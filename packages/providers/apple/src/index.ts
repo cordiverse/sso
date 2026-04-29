@@ -62,7 +62,7 @@ export default class AppleProvider extends SsoProvider {
     }, {
       primary: 'identityId',
       unique: [['sub']],
-      foreign: { identityId: ['sso_identity', 'id'] },
+      foreign: { identityId: ['sso.identity', 'id'] },
     })
 
     ctx.server.post('/sso/callback/apple', async (req) => {
