@@ -9,7 +9,6 @@
         "./packages/providers/*/src",
       ],
       "@cordisjs/plugin-sms-*": ["./packages/sms/*/src"],
-      "@cordisjs/plugin-*": ["./packages/*/src"],
     },
   },
   "files": [],

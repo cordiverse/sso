@@ -1,4 +1,4 @@
-import { Context } from 'cordis'
+import { Context, Inject } from 'cordis'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { SsoProvider } from '@cordisjs/plugin-sso'
 import type {} from '@cordisjs/plugin-database'
@@ -33,6 +33,7 @@ interface PendingChallenge {
   expiresAt: number
 }
 
+@Inject('timer')
 export default class MailProvider extends SsoProvider {
   name = 'mail'
   interactive = true

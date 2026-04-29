@@ -35,6 +35,7 @@ interface PendingChallenge {
 }
 
 @Inject('sms')
+@Inject('timer')
 export default class SmsProvider extends SsoProvider {
   name = 'sms'
   interactive = true

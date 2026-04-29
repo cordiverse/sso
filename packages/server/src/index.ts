@@ -18,7 +18,7 @@ export function apply(ctx: Context) {
     if (!provider.resolve) return errorResponse(400, 'RESOLVE_NOT_SUPPORTED')
 
     const body = await safeJson(req)
-    await ctx.waterfall('sso/auth', { provider: req.params.provider, credentials: body, request: req })
+    await ctx.parallel('sso/auth', { provider: req.params.provider, credentials: body, request: req })
 
     const result = await provider.resolve(body)
     if (!result) {

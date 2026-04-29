@@ -36,6 +36,7 @@ interface PKCEChallenge {
 }
 
 @Inject('server')
+@Inject('timer')
 export default class TwitterProvider extends SsoProvider {
   name = 'twitter'
   interactive = true
