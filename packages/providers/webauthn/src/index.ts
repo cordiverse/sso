@@ -1,4 +1,4 @@
-import { Context } from 'cordis'
+import { Context, Inject } from 'cordis'
 import { randomBytes } from 'node:crypto'
 import {
   AuthenticationResponseJSON,
@@ -39,6 +39,7 @@ export interface Config {
   timeout?: number
 }
 
+@Inject('timer')
 export default class WebAuthnProvider extends SsoProvider {
   name = 'webauthn'
   interactive = false
