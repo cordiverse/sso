@@ -59,7 +59,7 @@ export function apply(ctx: Context, config: Config = {}) {
   } = config
   const sso: Sso = ctx.sso
 
-  ctx.model.extend('oauth_client', {
+  ctx.database.extend('oauth_client', {
     clientId: 'string(255)',
     clientSecret: 'string(255)',
     name: 'string(255)',
@@ -68,7 +68,7 @@ export function apply(ctx: Context, config: Config = {}) {
     createdAt: 'timestamp',
   }, { primary: 'clientId' })
 
-  ctx.model.extend('oauth_code', {
+  ctx.database.extend('oauth_code', {
     code: 'string(255)',
     clientId: 'string(255)',
     userId: 'unsigned(8)',
@@ -79,7 +79,7 @@ export function apply(ctx: Context, config: Config = {}) {
     expiresAt: 'timestamp',
   }, { primary: 'code' })
 
-  ctx.model.extend('oauth_token', {
+  ctx.database.extend('oauth_token', {
     accessToken: 'string(255)',
     refreshToken: 'string(255)',
     clientId: 'string(255)',
@@ -104,7 +104,7 @@ export function apply(ctx: Context, config: Config = {}) {
   }
 
   async function validateClient(clientId: string, clientSecret?: string) {
-    const [client] = await ctx.model.get('oauth_client', { clientId })
+    const [client] = await ctx.database.get('oauth_client', { clientId })
     if (!client) return null
     if (clientSecret && client.clientSecret !== clientSecret) return null
     return client
@@ -151,7 +151,7 @@ export function apply(ctx: Context, config: Config = {}) {
     }
 
     const code = randomUUID()
-    await ctx.model.create('oauth_code', {
+    await ctx.database.create('oauth_code', {
       code,
       clientId: client_id,
       userId: user.id,
@@ -182,13 +182,13 @@ export function apply(ctx: Context, config: Config = {}) {
         return Response.json({ error: 'invalid_client' }, { status: 401 })
       }
 
-      const [authCode] = await ctx.model.get('oauth_code', { code })
+      const [authCode] = await ctx.database.get('oauth_code', { code })
       if (!authCode || authCode.clientId !== client_id) {
         return Response.json({ error: 'invalid_grant' }, { status: 400 })
       }
 
       if (authCode.expiresAt < new Date()) {
-        await ctx.model.remove('oauth_code', { code })
+        await ctx.database.remove('oauth_code', { code })
         return Response.json({ error: 'invalid_grant', error_description: 'code expired' }, { status: 400 })
       }
 
@@ -205,13 +205,13 @@ export function apply(ctx: Context, config: Config = {}) {
         }
       }
 
-      await ctx.model.remove('oauth_code', { code })
+      await ctx.database.remove('oauth_code', { code })
 
       const accessToken = randomUUID()
       const refreshToken = randomUUID()
       const now = new Date()
 
-      await ctx.model.create('oauth_token', {
+      await ctx.database.create('oauth_token', {
         accessToken,
         refreshToken,
         clientId: client_id,
@@ -236,18 +236,18 @@ export function apply(ctx: Context, config: Config = {}) {
         return Response.json({ error: 'invalid_client' }, { status: 401 })
       }
 
-      const [existing] = await ctx.model.get('oauth_token', { refreshToken: refresh_token })
+      const [existing] = await ctx.database.get('oauth_token', { refreshToken: refresh_token })
       if (!existing || existing.clientId !== client_id) {
         return Response.json({ error: 'invalid_grant' }, { status: 400 })
       }
 
-      await ctx.model.remove('oauth_token', { accessToken: existing.accessToken })
+      await ctx.database.remove('oauth_token', { accessToken: existing.accessToken })
 
       const accessToken = randomUUID()
       const refreshToken = randomUUID()
       const now = new Date()
 
-      await ctx.model.create('oauth_token', {
+      await ctx.database.create('oauth_token', {
         accessToken,
         refreshToken,
         clientId: client_id,
@@ -276,7 +276,7 @@ export function apply(ctx: Context, config: Config = {}) {
       return Response.json({ error: 'invalid_token' }, { status: 401 })
     }
 
-    const [oauthToken] = await ctx.model.get('oauth_token', { accessToken: token })
+    const [oauthToken] = await ctx.database.get('oauth_token', { accessToken: token })
     if (!oauthToken || oauthToken.expiresAt < new Date()) {
       return Response.json({ error: 'invalid_token' }, { status: 401 })
     }
@@ -301,9 +301,9 @@ export function apply(ctx: Context, config: Config = {}) {
       return Response.json({ error: 'invalid_request' }, { status: 400 })
     }
 
-    const removed = await ctx.model.remove('oauth_token', { accessToken: revokeToken })
+    const removed = await ctx.database.remove('oauth_token', { accessToken: revokeToken })
     if (!removed.matched) {
-      await ctx.model.remove('oauth_token', { refreshToken: revokeToken })
+      await ctx.database.remove('oauth_token', { refreshToken: revokeToken })
     }
 
     return Response.json({})

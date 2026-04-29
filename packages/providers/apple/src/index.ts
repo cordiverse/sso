@@ -53,7 +53,7 @@ export default class AppleProvider extends SsoProvider {
   constructor(ctx: Context, private config: Config) {
     super(ctx)
 
-    ctx.model.extend('sso_apple', {
+    ctx.database.extend('sso_apple', {
       identityId: 'unsigned(8)',
       sub: 'string(255)',
       email: 'string(255)',
@@ -117,10 +117,10 @@ export default class AppleProvider extends SsoProvider {
     if (tokenData.error) return null
     const idToken = decodeJWT(tokenData.id_token ?? id_token)
     const displayName = this.parseUserName(userJson)
-    const [existing] = await this.ctx.model.get('sso_apple', { sub: idToken.sub })
+    const [existing] = await this.ctx.database.get('sso_apple', { sub: idToken.sub })
     if (existing) {
       if (tokenData.refresh_token) {
-        await this.ctx.model.set('sso_apple', { identityId: existing.identityId }, {
+        await this.ctx.database.set('sso_apple', { identityId: existing.identityId }, {
           refreshToken: tokenData.refresh_token, ...(displayName ? { displayName } : {}),
         })
       }
@@ -140,7 +140,7 @@ export default class AppleProvider extends SsoProvider {
     })
     const tokenData = await tokenRes.json() as any
     const idToken = decodeJWT(tokenData.id_token ?? id_token)
-    await this.ctx.model.create('sso_apple', {
+    await this.ctx.database.create('sso_apple', {
       identityId,
       sub: idToken.sub,
       email: idToken.email,

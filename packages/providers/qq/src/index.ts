@@ -40,7 +40,7 @@ export default class QqProvider extends SsoProvider {
   constructor(ctx: Context, private config: Config) {
     super(ctx)
 
-    ctx.model.extend('sso_qq', {
+    ctx.database.extend('sso_qq', {
       identityId: 'unsigned(8)',
       openId: 'string(255)',
       unionId: 'string(255)',
@@ -124,9 +124,9 @@ export default class QqProvider extends SsoProvider {
     const { access_token, refresh_token, expires_in } = tokenData
     const meData = await this.getOpenId(access_token)
     const userInfo = await this.getUserInfo(access_token, meData.openid)
-    const [existing] = await this.ctx.model.get('sso_qq', { openId: meData.openid })
+    const [existing] = await this.ctx.database.get('sso_qq', { openId: meData.openid })
     if (existing) {
-      await this.ctx.model.set('sso_qq', { identityId: existing.identityId }, {
+      await this.ctx.database.set('sso_qq', { identityId: existing.identityId }, {
         accessToken: access_token,
         refreshToken: refresh_token,
         unionId: meData.unionid,
@@ -145,7 +145,7 @@ export default class QqProvider extends SsoProvider {
     const tokenData = await this.getAccessToken(code, redirect_uri)
     const meData = await this.getOpenId(tokenData.access_token)
     const userInfo = await this.getUserInfo(tokenData.access_token, meData.openid)
-    await this.ctx.model.create('sso_qq', {
+    await this.ctx.database.create('sso_qq', {
       identityId,
       openId: meData.openid,
       unionId: meData.unionid,

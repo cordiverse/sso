@@ -38,7 +38,7 @@ export default class PasswordProvider extends SsoProvider {
     this.minLength = config.minLength ?? 8
     this.algorithm = config.algorithm ?? 'sha256'
 
-    ctx.model.extend('sso_password', {
+    ctx.database.extend('sso_password', {
       identityId: 'unsigned(8)',
       username: 'string(255)',
       hash: 'string(255)',
@@ -54,7 +54,7 @@ export default class PasswordProvider extends SsoProvider {
     const { username, password } = credentials
     if (!username || !password) return null
 
-    const [record] = await this.ctx.model.get('sso_password', { username })
+    const [record] = await this.ctx.database.get('sso_password', { username })
     if (!record) return null
 
     const hash = hashPassword(password, record.salt, this.algorithm)
@@ -71,13 +71,13 @@ export default class PasswordProvider extends SsoProvider {
       throw new Error(`password must be at least ${this.minLength} characters`)
     }
 
-    const [existing] = await this.ctx.model.get('sso_password', { username })
+    const [existing] = await this.ctx.database.get('sso_password', { username })
     if (existing) throw new Error('username already taken')
 
     const salt = randomBytes(16).toString('hex')
     const hash = hashPassword(password, salt, this.algorithm)
 
-    await this.ctx.model.create('sso_password', {
+    await this.ctx.database.create('sso_password', {
       identityId,
       username,
       hash,

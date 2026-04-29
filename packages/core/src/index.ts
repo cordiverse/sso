@@ -89,14 +89,14 @@ export class Sso extends Service {
   constructor(ctx: Context, public config: Sso.Config = {}) {
     super(ctx, 'sso')
 
-    ctx.model.extend('sso.user', {
+    ctx.database.extend('sso.user', {
       id: 'unsigned(8)',
       name: 'string(255)',
       createdAt: 'timestamp',
       updatedAt: 'timestamp',
     }, { autoInc: true })
 
-    ctx.model.extend('sso.identity', {
+    ctx.database.extend('sso.identity', {
       id: 'unsigned(8)',
       userId: 'unsigned(8)',
       provider: 'string(255)',
@@ -106,7 +106,7 @@ export class Sso extends Service {
       foreign: { userId: ['sso.user', 'id'] },
     })
 
-    ctx.model.extend('sso.session', {
+    ctx.database.extend('sso.session', {
       token: 'string(255)',
       userId: 'unsigned(8)',
       identityId: 'unsigned(8)',

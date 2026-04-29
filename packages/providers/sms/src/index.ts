@@ -52,7 +52,7 @@ export default class SmsProvider extends SsoProvider {
     this.autoRegister = config.autoRegister ?? true
     this.template = config.template ?? 'Your verification code is {code}'
 
-    ctx.model.extend('sso_sms', {
+    ctx.database.extend('sso_sms', {
       identityId: 'unsigned(8)',
       phone: 'string(255)',
       verified: { type: 'boolean', initial: false },
@@ -98,7 +98,7 @@ export default class SmsProvider extends SsoProvider {
   async resolve(credentials: any) {
     const { phone } = credentials
     if (!phone) return null
-    const [record] = await this.ctx.model.get('sso_sms', { phone })
+    const [record] = await this.ctx.database.get('sso_sms', { phone })
     if (!record) return null
     return { identityId: record.identityId }
   }
@@ -107,9 +107,9 @@ export default class SmsProvider extends SsoProvider {
     const { identityId, phone } = credentials
     if (!identityId) throw new Error('identityId required')
     if (!phone) throw new Error('phone required')
-    const [existing] = await this.ctx.model.get('sso_sms', { phone })
+    const [existing] = await this.ctx.database.get('sso_sms', { phone })
     if (existing) throw new Error('phone already registered')
-    await this.ctx.model.create('sso_sms', { identityId, phone, verified: true })
+    await this.ctx.database.create('sso_sms', { identityId, phone, verified: true })
     return {}
   }
 }

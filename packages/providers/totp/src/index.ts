@@ -95,7 +95,7 @@ export default class TotpProvider extends SsoProvider {
     this.algorithm = config.algorithm ?? 'sha1'
     this.window = config.window ?? 1
 
-    ctx.model.extend('sso_totp', {
+    ctx.database.extend('sso_totp', {
       identityId: 'unsigned(8)',
       secret: 'string(255)',
       label: 'string(255)',
@@ -109,7 +109,7 @@ export default class TotpProvider extends SsoProvider {
   async resolve(credentials: any) {
     const { identityId, code } = credentials
     if (!identityId || !code) return null
-    const [record] = await this.ctx.model.get('sso_totp', { identityId })
+    const [record] = await this.ctx.database.get('sso_totp', { identityId })
     if (!record || !record.verified) return null
     const secret = base32Decode(record.secret)
     const now = Math.floor(Date.now() / 1000)
@@ -125,7 +125,7 @@ export default class TotpProvider extends SsoProvider {
     if (!identityId) throw new Error('identityId required')
     const secretBytes = randomBytes(20)
     const secret = base32Encode(secretBytes)
-    await this.ctx.model.create('sso_totp', { identityId, secret, label, verified: false })
+    await this.ctx.database.create('sso_totp', { identityId, secret, label, verified: false })
     const accountName = label || 'user'
     const otpauthUrl = `otpauth://totp/${encodeURIComponent(this.issuer)}:${encodeURIComponent(accountName)}`
       + `?secret=${secret}&issuer=${encodeURIComponent(this.issuer)}&algorithm=${this.algorithm.toUpperCase()}`
@@ -135,14 +135,14 @@ export default class TotpProvider extends SsoProvider {
 
   async verify(challengeId: string, response: string) {
     const identityId = parseInt(challengeId)
-    const [record] = await this.ctx.model.get('sso_totp', { identityId })
+    const [record] = await this.ctx.database.get('sso_totp', { identityId })
     if (!record) return false
     const secret = base32Decode(record.secret)
     const now = Math.floor(Date.now() / 1000)
     for (let i = -this.window; i <= this.window; i++) {
       const expected = generateTOTP(secret, now + i * this.period, this.period, this.digits, this.algorithm)
       if (expected === response) {
-        await this.ctx.model.set('sso_totp', { identityId }, { verified: true })
+        await this.ctx.database.set('sso_totp', { identityId }, { verified: true })
         return true
       }
     }

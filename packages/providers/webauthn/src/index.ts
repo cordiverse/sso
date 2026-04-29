@@ -57,7 +57,7 @@ export default class WebAuthnProvider extends SsoProvider {
     this.origin = config.origin
     this.timeout = config.timeout ?? 60000
 
-    ctx.model.extend('sso_webauthn', {
+    ctx.database.extend('sso_webauthn', {
       identityId: 'unsigned(8)',
       credentialId: 'string(512)',
       publicKey: 'text',
@@ -79,7 +79,7 @@ export default class WebAuthnProvider extends SsoProvider {
     const identities = await this.ctx.sso.getIdentities(userId)
     const ids = identities.filter(i => i.provider === 'webauthn').map(i => i.id)
     if (!ids.length) return []
-    const records = await this.ctx.model.get('sso_webauthn', { identityId: { $in: ids } })
+    const records = await this.ctx.database.get('sso_webauthn', { identityId: { $in: ids } })
     return records.map(r => ({
       id: r.credentialId,
       publicKey: Buffer.from(r.publicKey, 'base64'),
@@ -150,7 +150,7 @@ export default class WebAuthnProvider extends SsoProvider {
         const { credential, credentialDeviceType, credentialBackedUp } = verification.registrationInfo
         const { identityId, deviceName } = body
         if (identityId) {
-          await this.ctx.model.create('sso_webauthn', {
+          await this.ctx.database.create('sso_webauthn', {
             identityId,
             credentialId: credential.id,
             publicKey: Buffer.from(credential.publicKey).toString('base64'),
@@ -168,7 +168,7 @@ export default class WebAuthnProvider extends SsoProvider {
 
     try {
       const credentialId = body.id
-      const [record] = await this.ctx.model.get('sso_webauthn', { credentialId })
+      const [record] = await this.ctx.database.get('sso_webauthn', { credentialId })
       if (!record) return false
       const credential: WebAuthnCredential = {
         id: record.credentialId,
@@ -184,7 +184,7 @@ export default class WebAuthnProvider extends SsoProvider {
         credential,
       })
       if (!verification.verified) return false
-      await this.ctx.model.set('sso_webauthn', { credentialId }, {
+      await this.ctx.database.set('sso_webauthn', { credentialId }, {
         signCount: verification.authenticationInfo.newCounter,
         lastUsedAt: new Date(),
       })
@@ -195,7 +195,7 @@ export default class WebAuthnProvider extends SsoProvider {
   async resolve(credentials: any) {
     const { credentialId } = credentials
     if (!credentialId) return null
-    const [record] = await this.ctx.model.get('sso_webauthn', { credentialId })
+    const [record] = await this.ctx.database.get('sso_webauthn', { credentialId })
     if (!record) return null
     return { identityId: record.identityId }
   }
@@ -205,7 +205,7 @@ export default class WebAuthnProvider extends SsoProvider {
     if (!identityId || !credentialId || !publicKey) {
       throw new Error('identityId, credentialId, and publicKey required')
     }
-    await this.ctx.model.create('sso_webauthn', {
+    await this.ctx.database.create('sso_webauthn', {
       identityId,
       credentialId,
       publicKey: typeof publicKey === 'string' ? publicKey : Buffer.from(publicKey).toString('base64'),

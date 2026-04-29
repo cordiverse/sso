@@ -280,7 +280,7 @@ export default class OAuthProvider extends SsoProvider {
     this.name = this.preset.name
     this.scope = config.scope ?? this.preset.defaultScope
 
-    ctx.model.extend('sso_oauth', {
+    ctx.database.extend('sso_oauth', {
       identityId: 'unsigned(8)',
       provider: 'string(255)',
       externalId: 'string(255)',
@@ -384,11 +384,11 @@ export default class OAuthProvider extends SsoProvider {
     if (!accessToken) return null
     const userInfoData = await this.fetchUserInfo(accessToken)
     const userInfo = this.preset.extractUser(userInfoData)
-    const [existing] = await this.ctx.model.get('sso_oauth', {
+    const [existing] = await this.ctx.database.get('sso_oauth', {
       provider: this.name, externalId: userInfo.externalId,
     })
     if (existing) {
-      await this.ctx.model.set('sso_oauth', { identityId: existing.identityId }, {
+      await this.ctx.database.set('sso_oauth', { identityId: existing.identityId }, {
         accessToken,
         refreshToken: tokenData.refresh_token ?? existing.refreshToken,
         displayName: userInfo.displayName,
@@ -411,7 +411,7 @@ export default class OAuthProvider extends SsoProvider {
     const accessToken = tokenData.access_token ?? tokenData.data?.access_token
     const userInfoData = await this.fetchUserInfo(accessToken)
     const userInfo = this.preset.extractUser(userInfoData)
-    await this.ctx.model.create('sso_oauth', {
+    await this.ctx.database.create('sso_oauth', {
       identityId,
       provider: this.name,
       externalId: userInfo.externalId,

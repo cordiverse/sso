@@ -50,7 +50,7 @@ export default class MailProvider extends SsoProvider {
     this.autoRegister = config.autoRegister ?? true
     this.send = config.send
 
-    ctx.model.extend('sso_mail', {
+    ctx.database.extend('sso_mail', {
       identityId: 'unsigned(8)',
       email: 'string(255)',
       verified: { type: 'boolean', initial: false },
@@ -95,7 +95,7 @@ export default class MailProvider extends SsoProvider {
   async resolve(credentials: any) {
     const { email } = credentials
     if (!email) return null
-    const [record] = await this.ctx.model.get('sso_mail', { email })
+    const [record] = await this.ctx.database.get('sso_mail', { email })
     if (!record) return null
     return { identityId: record.identityId }
   }
@@ -104,9 +104,9 @@ export default class MailProvider extends SsoProvider {
     const { identityId, email } = credentials
     if (!identityId) throw new Error('identityId required')
     if (!email) throw new Error('email required')
-    const [existing] = await this.ctx.model.get('sso_mail', { email })
+    const [existing] = await this.ctx.database.get('sso_mail', { email })
     if (existing) throw new Error('email already registered')
-    await this.ctx.model.create('sso_mail', { identityId, email, verified: true })
+    await this.ctx.database.create('sso_mail', { identityId, email, verified: true })
     return {}
   }
 }

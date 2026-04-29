@@ -46,7 +46,7 @@ export default class TwitterProvider extends SsoProvider {
   constructor(ctx: Context, private config: Config) {
     super(ctx)
 
-    ctx.model.extend('sso_twitter', {
+    ctx.database.extend('sso_twitter', {
       identityId: 'unsigned(8)',
       twitterId: 'string(255)',
       username: 'string(255)',
@@ -127,9 +127,9 @@ export default class TwitterProvider extends SsoProvider {
     })
     const user = ((await userRes.json()) as any).data
 
-    const [existing] = await this.ctx.model.get('sso_twitter', { twitterId: user.id })
+    const [existing] = await this.ctx.database.get('sso_twitter', { twitterId: user.id })
     if (existing) {
-      await this.ctx.model.set('sso_twitter', { identityId: existing.identityId }, {
+      await this.ctx.database.set('sso_twitter', { identityId: existing.identityId }, {
         accessToken: access_token,
         refreshToken: refresh_token,
         username: user.username,
@@ -161,7 +161,7 @@ export default class TwitterProvider extends SsoProvider {
     })
     const user = ((await userRes.json()) as any).data
 
-    await this.ctx.model.create('sso_twitter', {
+    await this.ctx.database.create('sso_twitter', {
       identityId,
       twitterId: user.id,
       username: user.username,

@@ -35,7 +35,7 @@ export default class WeChatProvider extends SsoProvider {
   constructor(ctx: Context, private config: Config) {
     super(ctx)
 
-    ctx.model.extend('sso_wechat', {
+    ctx.database.extend('sso_wechat', {
       identityId: 'unsigned(8)',
       openId: 'string(255)',
       unionId: 'string(255)',
@@ -106,9 +106,9 @@ export default class WeChatProvider extends SsoProvider {
     if (tokenData.errcode) return null
     const { access_token, openid, unionid, refresh_token, expires_in } = tokenData
     const userInfo = await this.getUserInfo(access_token, openid)
-    const [existing] = await this.ctx.model.get('sso_wechat', { openId: openid })
+    const [existing] = await this.ctx.database.get('sso_wechat', { openId: openid })
     if (existing) {
-      await this.ctx.model.set('sso_wechat', { identityId: existing.identityId }, {
+      await this.ctx.database.set('sso_wechat', { identityId: existing.identityId }, {
         accessToken: access_token,
         refreshToken: refresh_token,
         unionId: unionid,
@@ -127,7 +127,7 @@ export default class WeChatProvider extends SsoProvider {
     const tokenData = await this.getAccessToken(code)
     const { access_token, openid, unionid, refresh_token, expires_in } = tokenData
     const userInfo = await this.getUserInfo(access_token, openid)
-    await this.ctx.model.create('sso_wechat', {
+    await this.ctx.database.create('sso_wechat', {
       identityId,
       openId: openid,
       unionId: unionid,
