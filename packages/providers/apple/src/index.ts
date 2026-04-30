@@ -1,9 +1,10 @@
 import { Context, Inject } from 'cordis'
-import { createPrivateKey, createSign } from 'node:crypto'
+import { createPrivateKey, createSign, randomBytes } from 'node:crypto'
 import { SsoProvider } from '@cordisjs/plugin-sso'
-import { callbackResponse } from '@cordisjs/oauth-utils'
+import { callbackResponse, decodeJwtPayload, StateStore } from '@cordisjs/oauth-utils'
 import type {} from '@cordisjs/plugin-server'
 import type {} from '@cordisjs/plugin-database'
+import type {} from '@cordisjs/plugin-timer'
 
 declare module '@cordisjs/plugin-database' {
   interface Tables {
@@ -42,18 +43,22 @@ function generateClientSecret(config: Config): string {
 }
 
 function decodeJWT(token: string): any {
-  const [, payload] = token.split('.')
-  return JSON.parse(Buffer.from(payload, 'base64url').toString())
+  return decodeJwtPayload(token)
 }
 
 @Inject('server')
+@Inject('timer')
 export default class AppleProvider extends SsoProvider {
   name = 'apple'
   interactive = true
   autoRegister = true
 
+  private state: StateStore
+
   constructor(ctx: Context, private config: Config) {
     super(ctx)
+
+    this.state = new StateStore(ctx)
 
     ctx.database.extend('sso_apple', {
       identityId: 'unsigned(8)',
@@ -71,7 +76,10 @@ export default class AppleProvider extends SsoProvider {
       let body: any = {}
       try { body = await req.json() } catch {}
       const { code, state, id_token, user } = body
-      const result = await this.resolve!({ code, state, id_token, user })
+      const entry = this.state.consume(state)
+      if (!entry) return callbackResponse({ error: 'INVALID_STATE', status: 400 }, this.config.redirectUrl)
+      const nonce = entry.payload?.nonce
+      const result = await this.resolve!({ code, state, id_token, user, nonce })
       if (result) {
         const identity = await ctx.sso.getIdentity(result.identityId)
         const token = await ctx.sso.createSession(identity!.userId, identity!.id)
@@ -79,7 +87,7 @@ export default class AppleProvider extends SsoProvider {
       }
       if (this.autoRegister) {
         const { user: ssoUser, identityId } = await ctx.sso.createUser('apple')
-        await this.register!({ identityId, code, id_token, user })
+        await this.register!({ identityId, code, id_token, user, nonce })
         const token = await ctx.sso.createSession(ssoUser.id, identityId)
         return callbackResponse({ token }, this.config.redirectUrl)
       }
@@ -95,6 +103,8 @@ export default class AppleProvider extends SsoProvider {
   }
 
   getAuthUrl(redirectUri: string, state: string) {
+    const nonce = randomBytes(16).toString('base64url')
+    this.state.register(state, redirectUri, { nonce })
     const params = new URLSearchParams({
       client_id: this.config.clientId,
       redirect_uri: redirectUri,
@@ -102,12 +112,13 @@ export default class AppleProvider extends SsoProvider {
       response_mode: 'form_post',
       scope: 'name email',
       state,
+      nonce,
     })
     return `https://appleid.apple.com/auth/authorize?${params}`
   }
 
   async resolve(credentials: any) {
-    const { code, id_token, user: userJson } = credentials
+    const { code, id_token, user: userJson, nonce } = credentials
     if (!code) return null
     const clientSecret = generateClientSecret(this.config)
     const tokenRes = await fetch('https://appleid.apple.com/auth/token', {
@@ -118,6 +129,7 @@ export default class AppleProvider extends SsoProvider {
     const tokenData = await tokenRes.json() as any
     if (tokenData.error) return null
     const idToken = decodeJWT(tokenData.id_token ?? id_token)
+    if (nonce && idToken.nonce !== nonce) return null
     const displayName = this.parseUserName(userJson)
     const [existing] = await this.ctx.database.get('sso_apple', { sub: idToken.sub })
     if (existing) {
@@ -132,7 +144,7 @@ export default class AppleProvider extends SsoProvider {
   }
 
   async register(credentials: any) {
-    const { identityId, code, id_token, user: userJson } = credentials
+    const { identityId, code, id_token, user: userJson, nonce } = credentials
     if (!identityId) throw new Error('identityId required')
     const clientSecret = generateClientSecret(this.config)
     const tokenRes = await fetch('https://appleid.apple.com/auth/token', {
@@ -142,6 +154,7 @@ export default class AppleProvider extends SsoProvider {
     })
     const tokenData = await tokenRes.json() as any
     const idToken = decodeJWT(tokenData.id_token ?? id_token)
+    if (nonce && idToken.nonce !== nonce) throw new Error('nonce mismatch')
     await this.ctx.database.create('sso_apple', {
       identityId,
       sub: idToken.sub,

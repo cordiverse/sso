@@ -1,8 +1,9 @@
 import { Context, Inject } from 'cordis'
 import { SsoProvider } from '@cordisjs/plugin-sso'
-import { callbackResponse } from '@cordisjs/oauth-utils'
+import { callbackResponse, StateStore } from '@cordisjs/oauth-utils'
 import type {} from '@cordisjs/plugin-server'
 import type {} from '@cordisjs/plugin-database'
+import type {} from '@cordisjs/plugin-timer'
 
 declare module '@cordisjs/plugin-database' {
   interface Tables {
@@ -30,13 +31,18 @@ export interface Config {
 }
 
 @Inject('server')
+@Inject('timer')
 export default class WeChatProvider extends SsoProvider {
   name = 'wechat'
   interactive = true
   autoRegister = true
 
+  private state: StateStore
+
   constructor(ctx: Context, private config: Config) {
     super(ctx)
+
+    this.state = new StateStore(ctx)
 
     ctx.database.extend('sso_wechat', {
       identityId: 'unsigned(8)',
@@ -57,6 +63,8 @@ export default class WeChatProvider extends SsoProvider {
       const url = new URL(req.url, 'http://localhost')
       const code = url.searchParams.get('code')!
       const state = url.searchParams.get('state')!
+      const entry = this.state.consume(state)
+      if (!entry) return callbackResponse({ error: 'INVALID_STATE', status: 400 }, this.config.redirectUrl)
       const result = await this.resolve!({ code, state })
       if (result) {
         const identity = await ctx.sso.getIdentity(result.identityId)
@@ -91,6 +99,7 @@ export default class WeChatProvider extends SsoProvider {
   }
 
   getAuthUrl(redirectUri: string, state: string) {
+    this.state.register(state, redirectUri)
     const scope = this.config.scope ?? 'snsapi_login'
     const params = new URLSearchParams({
       appid: this.config.appId,

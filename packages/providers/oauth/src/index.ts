@@ -1,6 +1,6 @@
 import { Context, Inject } from 'cordis'
 import { SsoProvider } from '@cordisjs/plugin-sso'
-import { callbackResponse, PkceStore } from '@cordisjs/oauth-utils'
+import { callbackResponse, decodeJwtPayload, PkceStore, StateStore } from '@cordisjs/oauth-utils'
 import type {} from '@cordisjs/plugin-server'
 import type {} from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-timer'
@@ -38,6 +38,14 @@ export interface OAuthPreset {
    * support PKCE (e.g. weibo's pre-OAuth-2.1 implementation).
    */
   pkce?: 'S256' | 'plain' | false
+  /**
+   * If true, the token response carries an `id_token` (OIDC) and we can
+   * extract user info from it instead of making a second HTTP call to
+   * `userInfoUrl`. The `id_token` is decoded but NOT signature-verified —
+   * we trust the issuer because the token came directly over TLS from the
+   * known token endpoint.
+   */
+  oidc?: boolean
   extractUser(data: any): {
     externalId: string
     displayName?: string
@@ -66,8 +74,9 @@ export const google: OAuthPreset = {
   defaultScope: 'openid email profile',
   authorizeParams: { access_type: 'offline', prompt: 'consent' },
   tokenParams: { grant_type: 'authorization_code' },
+  oidc: true,
   extractUser: (data) => ({
-    externalId: data.id, displayName: data.name, email: data.email, avatar: data.picture,
+    externalId: data.sub ?? data.id, displayName: data.name, email: data.email, avatar: data.picture,
   }),
 }
 
@@ -79,8 +88,9 @@ export const microsoft: OAuthPreset = {
   defaultScope: 'openid email profile User.Read',
   authorizeParams: { response_mode: 'query' },
   tokenParams: { grant_type: 'authorization_code' },
+  oidc: true,
   extractUser: (data) => ({
-    externalId: data.id, displayName: data.displayName, email: data.mail ?? data.userPrincipalName, avatar: undefined,
+    externalId: data.sub ?? data.id, displayName: data.name ?? data.displayName, email: data.email ?? data.mail ?? data.userPrincipalName ?? data.preferred_username, avatar: undefined,
   }),
 }
 
@@ -129,6 +139,7 @@ export const linkedin: OAuthPreset = {
   userInfoUrl: 'https://api.linkedin.com/v2/userinfo',
   defaultScope: 'openid email profile',
   tokenParams: { grant_type: 'authorization_code' },
+  oidc: true,
   extractUser: (data) => ({
     externalId: data.sub, displayName: data.name, email: data.email, avatar: data.picture,
   }),
@@ -140,6 +151,7 @@ export const slack: OAuthPreset = {
   tokenUrl: 'https://slack.com/api/openid.connect.token',
   userInfoUrl: 'https://slack.com/api/openid.connect.userInfo',
   defaultScope: 'openid email profile',
+  oidc: true,
   extractUser: (data) => ({
     externalId: data.sub ?? data['https://slack.com/user_id'],
     displayName: data.name,
@@ -255,6 +267,7 @@ export default class OAuthProvider extends SsoProvider {
   private preset: OAuthPreset
   private scope: string
   private pkce?: PkceStore
+  private state?: StateStore
 
   constructor(ctx: Context, private config: Config) {
     super(ctx)
@@ -294,6 +307,8 @@ export default class OAuthProvider extends SsoProvider {
     const pkceMethod = this.preset.pkce ?? 'S256'
     if (pkceMethod !== false) {
       this.pkce = new PkceStore(ctx, { challengeMethod: pkceMethod })
+    } else {
+      this.state = new StateStore(ctx)
     }
 
     ctx.database.extend('sso_oauth', {
@@ -382,6 +397,8 @@ export default class OAuthProvider extends SsoProvider {
       const issued = this.pkce.register(state, redirectUri)
       extras.code_challenge = issued.codeChallenge
       extras.code_challenge_method = issued.codeChallengeMethod
+    } else {
+      this.state!.register(state, redirectUri)
     }
     const params = new URLSearchParams({
       response_type: 'code',
@@ -401,18 +418,18 @@ export default class OAuthProvider extends SsoProvider {
 
   async resolve(credentials: any) {
     const { code, state } = credentials
-    if (!code) return null
+    if (!code || !state) return null
     let redirectUri: string | undefined
     let codeVerifier: string | undefined
     if (this.pkce) {
-      if (!state) return null
       const entry = this.pkce.consume(state)
       if (!entry) return null
       redirectUri = entry.redirectUri
       codeVerifier = entry.codeVerifier
     } else {
-      // Legacy preset (weibo) — accept the redirect_uri the caller passes in.
-      redirectUri = credentials.redirect_uri
+      const entry = this.state!.consume(state)
+      if (!entry) return null
+      redirectUri = entry.redirectUri
     }
     if (!redirectUri) return null
 
@@ -420,7 +437,9 @@ export default class OAuthProvider extends SsoProvider {
     if (tokenData.error) return null
     const accessToken = tokenData.access_token ?? tokenData.data?.access_token
     if (!accessToken) return null
-    const userInfoData = await this.fetchUserInfo(accessToken)
+    const userInfoData = this.preset.oidc && tokenData.id_token
+      ? decodeJwtPayload(tokenData.id_token)
+      : await this.fetchUserInfo(accessToken)
     const userInfo = this.preset.extractUser(userInfoData)
     const [existing] = await this.ctx.database.get('sso_oauth', {
       provider: this.name, externalId: userInfo.externalId,
@@ -453,13 +472,16 @@ export default class OAuthProvider extends SsoProvider {
       redirectUri = entry.redirectUri
       codeVerifier = entry.codeVerifier
     } else {
-      redirectUri = credentials.redirect_uri
-      if (!redirectUri) throw new Error('redirect_uri required')
+      const entry = this.state!.consume(state)
+      if (!entry) throw new Error('state expired or unknown')
+      redirectUri = entry.redirectUri
     }
 
     const tokenData = await this.exchangeToken(code, redirectUri, codeVerifier) as any
     const accessToken = tokenData.access_token ?? tokenData.data?.access_token
-    const userInfoData = await this.fetchUserInfo(accessToken)
+    const userInfoData = this.preset.oidc && tokenData.id_token
+      ? decodeJwtPayload(tokenData.id_token)
+      : await this.fetchUserInfo(accessToken)
     const userInfo = this.preset.extractUser(userInfoData)
     await this.ctx.database.create('sso_oauth', {
       identityId,

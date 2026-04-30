@@ -1,8 +1,9 @@
 import { Context, Inject } from 'cordis'
 import { SsoProvider } from '@cordisjs/plugin-sso'
-import { callbackResponse } from '@cordisjs/oauth-utils'
+import { callbackResponse, StateStore } from '@cordisjs/oauth-utils'
 import type {} from '@cordisjs/plugin-server'
 import type {} from '@cordisjs/plugin-database'
+import type {} from '@cordisjs/plugin-timer'
 
 declare module '@cordisjs/plugin-database' {
   interface Tables {
@@ -34,13 +35,18 @@ function parseCallback(text: string): any {
 }
 
 @Inject('server')
+@Inject('timer')
 export default class QqProvider extends SsoProvider {
   name = 'qq'
   interactive = true
   autoRegister = true
 
+  private state: StateStore
+
   constructor(ctx: Context, private config: Config) {
     super(ctx)
+
+    this.state = new StateStore(ctx)
 
     ctx.database.extend('sso_qq', {
       identityId: 'unsigned(8)',
@@ -61,8 +67,10 @@ export default class QqProvider extends SsoProvider {
       const url = new URL(req.url, 'http://localhost')
       const code = url.searchParams.get('code')!
       const state = url.searchParams.get('state')!
-      const redirect_uri = url.searchParams.get('redirect_uri')!
-      const result = await this.resolve!({ code, state, redirect_uri })
+      const entry = this.state.consume(state)
+      if (!entry) return callbackResponse({ error: 'INVALID_STATE', status: 400 }, this.config.redirectUrl)
+      const redirect_uri = entry.redirectUri
+      const result = await this.resolve!({ code, redirect_uri })
       if (result) {
         const identity = await ctx.sso.getIdentity(result.identityId)
         const token = await ctx.sso.createSession(identity!.userId, identity!.id)
@@ -109,6 +117,7 @@ export default class QqProvider extends SsoProvider {
   }
 
   getAuthUrl(redirectUri: string, state: string) {
+    this.state.register(state, redirectUri)
     const params = new URLSearchParams({
       response_type: 'code',
       client_id: this.config.appId,

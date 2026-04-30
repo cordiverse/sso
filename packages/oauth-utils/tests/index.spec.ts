@@ -3,13 +3,29 @@ import Timer from '@cordisjs/plugin-timer'
 import { expect } from 'chai'
 import { install, InstalledClock } from '@sinonjs/fake-timers'
 import { createHash } from 'node:crypto'
-import { callbackResponse, PkceStore } from '../src'
+import { callbackResponse, decodeJwtPayload, PkceStore, StateStore } from '../src'
 
 function sleep(ms = 0) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms))
 }
 
 describe('@cordisjs/oauth-utils', () => {
+  describe('decodeJwtPayload', () => {
+    function makeJwt(payload: any): string {
+      const enc = (o: any) => Buffer.from(JSON.stringify(o)).toString('base64url')
+      return `${enc({ alg: 'RS256' })}.${enc(payload)}.signature-not-verified`
+    }
+
+    it('decodes the payload of a JWT', () => {
+      const token = makeJwt({ sub: 'abc', email: 'x@y.z', nonce: 'n1' })
+      expect(decodeJwtPayload(token)).to.deep.equal({ sub: 'abc', email: 'x@y.z', nonce: 'n1' })
+    })
+
+    it('throws on a malformed token', () => {
+      expect(() => decodeJwtPayload('not-a-jwt')).to.throw()
+    })
+  })
+
   describe('callbackResponse', () => {
     it('without redirectUrl: success → JSON {token}', async () => {
       const res = callbackResponse({ token: 'abc' })
@@ -117,6 +133,66 @@ describe('@cordisjs/oauth-utils', () => {
       const store = new PkceStore(ctx)
       const states = new Set<string>()
       for (let i = 0; i < 50; i++) states.add(store.issue('https://app/callback').state)
+      expect(states.size).to.equal(50)
+    })
+  })
+
+  describe('StateStore', () => {
+    let ctx: Context
+    let clock: InstalledClock
+
+    beforeEach(async () => {
+      clock = install({ now: 1700000000000 })
+      ctx = new Context()
+      await ctx.plugin(Timer)
+    })
+
+    afterEach(() => {
+      clock.uninstall()
+    })
+
+    it('issue + consume round-trip', async () => {
+      const store = new StateStore(ctx)
+      const { state } = store.issue('https://app/callback', { foo: 'bar' })
+      expect(state).to.be.a('string').with.length.greaterThan(10)
+      const entry = store.consume(state)
+      expect(entry).to.exist
+      expect(entry!.redirectUri).to.equal('https://app/callback')
+      expect(entry!.payload).to.deep.equal({ foo: 'bar' })
+      expect(store.size).to.equal(0)
+    })
+
+    it('register honours a caller-supplied state', async () => {
+      const store = new StateStore(ctx)
+      store.register('my-own-state', 'https://app/cb', { x: 1 })
+      const entry = store.consume('my-own-state')
+      expect(entry?.payload).to.deep.equal({ x: 1 })
+    })
+
+    it('consume rejects unknown state', async () => {
+      const store = new StateStore(ctx)
+      expect(store.consume('not-issued')).to.be.undefined
+    })
+
+    it('consume rejects expired state', async () => {
+      const store = new StateStore(ctx, { ttl: 1000 })
+      const { state } = store.issue('https://app/cb')
+      clock.tick(1500)
+      expect(store.consume(state)).to.be.undefined
+      expect(store.size).to.equal(0)
+    })
+
+    it('consume is single-use (CSRF replay defense)', async () => {
+      const store = new StateStore(ctx)
+      const { state } = store.issue('https://app/cb')
+      expect(store.consume(state)).to.exist
+      expect(store.consume(state)).to.be.undefined
+    })
+
+    it('issued states are unique across calls', async () => {
+      const store = new StateStore(ctx)
+      const states = new Set<string>()
+      for (let i = 0; i < 50; i++) states.add(store.issue('https://app/cb').state)
       expect(states.size).to.equal(50)
     })
   })
