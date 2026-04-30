@@ -9,15 +9,19 @@
     "lib"
   ],
   "peerDependencies": {
+    "@cordisjs/oauth-utils": "^0.1.0",
     "@cordisjs/plugin-database": "^4.0.1",
     "@cordisjs/plugin-server": "^1.5.0",
     "@cordisjs/plugin-sso": "^0.1.0",
+    "@cordisjs/plugin-timer": "^1.1.1",
     "cordis": "^4.0.0-rc.4"
   },
   "devDependencies": {
+    "@cordisjs/oauth-utils": "^0.1.0",
     "@cordisjs/plugin-database": "^4.0.1",
     "@cordisjs/plugin-server": "^1.5.0",
     "@cordisjs/plugin-sso": "^0.1.0",
+    "@cordisjs/plugin-timer": "^1.1.1",
     "cordis": "^4.0.0-rc.4"
   }
 }

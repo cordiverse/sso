@@ -1,6 +1,7 @@
 import { Context, Inject } from 'cordis'
 import { createPrivateKey, createSign } from 'node:crypto'
 import { SsoProvider } from '@cordisjs/plugin-sso'
+import { callbackResponse } from '@cordisjs/oauth-utils'
 import type {} from '@cordisjs/plugin-server'
 import type {} from '@cordisjs/plugin-database'
 
@@ -23,6 +24,7 @@ export interface Config {
   teamId: string
   keyId: string
   privateKey: string
+  redirectUrl?: string
 }
 
 function generateClientSecret(config: Config): string {
@@ -73,15 +75,15 @@ export default class AppleProvider extends SsoProvider {
       if (result) {
         const identity = await ctx.sso.getIdentity(result.identityId)
         const token = await ctx.sso.createSession(identity!.userId, identity!.id)
-        return Response.json({ token })
+        return callbackResponse({ token }, this.config.redirectUrl)
       }
       if (this.autoRegister) {
         const { user: ssoUser, identityId } = await ctx.sso.createUser('apple')
         await this.register!({ identityId, code, id_token, user })
         const token = await ctx.sso.createSession(ssoUser.id, identityId)
-        return Response.json({ token })
+        return callbackResponse({ token }, this.config.redirectUrl)
       }
-      return Response.json({ error: 'ACCOUNT_NOT_FOUND' }, { status: 401 })
+      return callbackResponse({ error: 'ACCOUNT_NOT_FOUND', status: 401 }, this.config.redirectUrl)
     })
   }
 

@@ -1,5 +1,6 @@
 import { Context, Inject } from 'cordis'
 import { SsoProvider } from '@cordisjs/plugin-sso'
+import { callbackResponse } from '@cordisjs/oauth-utils'
 import type {} from '@cordisjs/plugin-server'
 import type {} from '@cordisjs/plugin-database'
 
@@ -24,6 +25,8 @@ export interface Config {
   appId: string
   appSecret: string
   scope?: string
+  /** See OAuth provider's `redirectUrl` — same fragment-token semantics. */
+  redirectUrl?: string
 }
 
 @Inject('server')
@@ -58,15 +61,15 @@ export default class WeChatProvider extends SsoProvider {
       if (result) {
         const identity = await ctx.sso.getIdentity(result.identityId)
         const token = await ctx.sso.createSession(identity!.userId, identity!.id)
-        return Response.json({ token })
+        return callbackResponse({ token }, this.config.redirectUrl)
       }
       if (this.autoRegister) {
         const { user, identityId } = await ctx.sso.createUser('wechat')
         await this.register!({ identityId, code })
         const token = await ctx.sso.createSession(user.id, identityId)
-        return Response.json({ token })
+        return callbackResponse({ token }, this.config.redirectUrl)
       }
-      return Response.json({ error: 'ACCOUNT_NOT_FOUND' }, { status: 401 })
+      return callbackResponse({ error: 'ACCOUNT_NOT_FOUND', status: 401 }, this.config.redirectUrl)
     })
   }
 

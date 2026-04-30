@@ -213,24 +213,6 @@ describe('@cordisjs/plugin-sso-server', () => {
     })
   })
 
-  describe('GET /sso/callback/:provider', () => {
-    it('autoRegister path returns a token', async () => {
-      ({ ctx, baseUrl } = await setup())
-      await ctx.plugin(OAuthFakeProvider)
-      await sleep()
-      const res = await fetch(`${baseUrl}/sso/callback/oauth-fake?code=abc`)
-      expect(res.status).to.equal(200)
-      const body = await res.json() as any
-      expect(body.token).to.be.a('string')
-    })
-
-    it('returns 404 for unknown provider', async () => {
-      ({ ctx, baseUrl } = await setup())
-      const res = await fetch(`${baseUrl}/sso/callback/nope?code=abc`)
-      expect(res.status).to.equal(404)
-    })
-  })
-
   describe('challenge / verify', () => {
     it('challenge → verify (totp) end to end', async () => {
       ({ ctx, baseUrl } = await setup())

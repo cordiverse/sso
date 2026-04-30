@@ -1,7 +1,9 @@
 import { Context, Inject } from 'cordis'
 import { SsoProvider } from '@cordisjs/plugin-sso'
+import { callbackResponse, PkceStore } from '@cordisjs/oauth-utils'
 import type {} from '@cordisjs/plugin-server'
 import type {} from '@cordisjs/plugin-database'
+import type {} from '@cordisjs/plugin-timer'
 
 declare module '@cordisjs/plugin-database' {
   interface Tables {
@@ -31,6 +33,11 @@ export interface OAuthPreset {
   authorizeParams?: Record<string, string>
   tokenParams?: Record<string, string>
   tokenTransport?: 'header' | 'query'
+  /**
+   * PKCE method. Default `'S256'`. Set to `false` for providers that don't
+   * support PKCE (e.g. weibo's pre-OAuth-2.1 implementation).
+   */
+  pkce?: 'S256' | 'plain' | false
   extractUser(data: any): {
     externalId: string
     displayName?: string
@@ -172,6 +179,7 @@ export const weibo: OAuthPreset = {
   userInfoUrl: 'https://api.weibo.com/2/users/show.json',
   defaultScope: '',
   tokenTransport: 'query',
+  pkce: false,
   extractUser: (data) => ({
     externalId: String(data.id ?? data.uid),
     displayName: data.screen_name ?? data.name,
@@ -228,6 +236,7 @@ export interface Config {
   authorizeUrl?: string
   tokenUrl?: string
   userInfoUrl?: string
+  redirectUrl?: string
 }
 
 const builtinPresets: Record<string, OAuthPreset> = {
@@ -235,6 +244,7 @@ const builtinPresets: Record<string, OAuthPreset> = {
 }
 
 @Inject('server')
+@Inject('timer')
 export default class OAuthProvider extends SsoProvider {
   static reusable = true
 
@@ -244,6 +254,7 @@ export default class OAuthProvider extends SsoProvider {
 
   private preset: OAuthPreset
   private scope: string
+  private pkce?: PkceStore
 
   constructor(ctx: Context, private config: Config) {
     super(ctx)
@@ -280,6 +291,11 @@ export default class OAuthProvider extends SsoProvider {
     this.name = this.preset.name
     this.scope = config.scope ?? this.preset.defaultScope
 
+    const pkceMethod = this.preset.pkce ?? 'S256'
+    if (pkceMethod !== false) {
+      this.pkce = new PkceStore(ctx, { challengeMethod: pkceMethod })
+    }
+
     ctx.database.extend('sso_oauth', {
       identityId: 'unsigned(8)',
       provider: 'string(255)',
@@ -301,31 +317,31 @@ export default class OAuthProvider extends SsoProvider {
       const url = new URL(req.url, 'http://localhost')
       const code = url.searchParams.get('code')!
       const state = url.searchParams.get('state')!
-      const redirect_uri = url.searchParams.get('redirect_uri')!
-      const result = await this.resolve!({ code, state, redirect_uri })
+      const result = await this.resolve!({ code, state })
       if (result) {
         const identity = await ctx.sso.getIdentity(result.identityId)
         const token = await ctx.sso.createSession(identity!.userId, identity!.id)
-        return Response.json({ token })
+        return callbackResponse({ token }, this.config.redirectUrl)
       }
       if (this.autoRegister) {
         const { user, identityId } = await ctx.sso.createUser(this.name)
-        await this.register!({ identityId, code, redirect_uri })
+        await this.register!({ identityId, code, state })
         const token = await ctx.sso.createSession(user.id, identityId)
-        return Response.json({ token })
+        return callbackResponse({ token }, this.config.redirectUrl)
       }
-      return Response.json({ error: 'ACCOUNT_NOT_FOUND' }, { status: 401 })
+      return callbackResponse({ error: 'ACCOUNT_NOT_FOUND', status: 401 }, this.config.redirectUrl)
     })
   }
 
-  private async exchangeToken(code: string, redirectUri?: string): Promise<any> {
+  private async exchangeToken(code: string, redirectUri: string, codeVerifier?: string): Promise<any> {
     const body: Record<string, string> = {
       client_id: this.config.clientId,
       client_secret: this.config.clientSecret,
       code,
+      redirect_uri: redirectUri,
       ...this.preset.tokenParams,
     }
-    if (redirectUri) body.redirect_uri = redirectUri
+    if (codeVerifier) body.code_verifier = codeVerifier
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -361,12 +377,20 @@ export default class OAuthProvider extends SsoProvider {
   }
 
   getAuthUrl(redirectUri: string, state: string) {
+    const extras: Record<string, string> = {}
+    if (this.pkce) {
+      const issued = this.pkce.register(state, redirectUri)
+      extras.code_challenge = issued.codeChallenge
+      extras.code_challenge_method = issued.codeChallengeMethod
+    }
     const params = new URLSearchParams({
+      response_type: 'code',
       client_id: this.config.clientId,
       redirect_uri: redirectUri,
       state,
       ...(this.scope ? { scope: this.scope } : {}),
       ...(this.preset.authorizeParams ?? {}),
+      ...extras,
     })
     if (this.name === 'lark') {
       params.delete('client_id')
@@ -376,9 +400,23 @@ export default class OAuthProvider extends SsoProvider {
   }
 
   async resolve(credentials: any) {
-    const { code, redirect_uri } = credentials
+    const { code, state } = credentials
     if (!code) return null
-    const tokenData = await this.exchangeToken(code, redirect_uri) as any
+    let redirectUri: string | undefined
+    let codeVerifier: string | undefined
+    if (this.pkce) {
+      if (!state) return null
+      const entry = this.pkce.consume(state)
+      if (!entry) return null
+      redirectUri = entry.redirectUri
+      codeVerifier = entry.codeVerifier
+    } else {
+      // Legacy preset (weibo) — accept the redirect_uri the caller passes in.
+      redirectUri = credentials.redirect_uri
+    }
+    if (!redirectUri) return null
+
+    const tokenData = await this.exchangeToken(code, redirectUri, codeVerifier) as any
     if (tokenData.error) return null
     const accessToken = tokenData.access_token ?? tokenData.data?.access_token
     if (!accessToken) return null
@@ -405,9 +443,21 @@ export default class OAuthProvider extends SsoProvider {
   }
 
   async register(credentials: any) {
-    const { identityId, code, redirect_uri } = credentials
+    const { identityId, code, state } = credentials
     if (!identityId) throw new Error('identityId required')
-    const tokenData = await this.exchangeToken(code, redirect_uri) as any
+    let redirectUri: string | undefined
+    let codeVerifier: string | undefined
+    if (this.pkce) {
+      const entry = this.pkce.consume(state)
+      if (!entry) throw new Error('PKCE challenge expired or unknown state')
+      redirectUri = entry.redirectUri
+      codeVerifier = entry.codeVerifier
+    } else {
+      redirectUri = credentials.redirect_uri
+      if (!redirectUri) throw new Error('redirect_uri required')
+    }
+
+    const tokenData = await this.exchangeToken(code, redirectUri, codeVerifier) as any
     const accessToken = tokenData.access_token ?? tokenData.data?.access_token
     const userInfoData = await this.fetchUserInfo(accessToken)
     const userInfo = this.preset.extractUser(userInfoData)

@@ -54,26 +54,11 @@ export function apply(ctx: Context) {
     return Response.json({ url: authUrl })
   })
 
-  // OAuth callback (generic fallback)
-  ctx.server.get('/sso/callback/:provider', async (req) => {
-    const url = new URL(req.url, 'http://localhost')
-    const query: Record<string, string> = {}
-    url.searchParams.forEach((v, k) => { query[k] = v })
-
-    const provider = ctx.sso.getProvider(req.params.provider)
-    if (!provider?.resolve) return errorResponse(404, 'PROVIDER_NOT_FOUND')
-    const result = await provider.resolve(query)
-    if (!result) {
-      if (provider.autoRegister && provider.register) {
-        return Response.json(await handleRegister(ctx.sso, provider, query))
-      }
-      return errorResponse(401, 'ACCOUNT_NOT_FOUND')
-    }
-    const identity = await ctx.sso.getIdentity(result.identityId)
-    if (!identity) return errorResponse(500, 'IDENTITY_NOT_FOUND')
-    const token = await ctx.sso.createSession(identity.userId, identity.id)
-    return Response.json({ token })
-  })
+  // OAuth callback: each OAuth provider registers `/sso/callback/<name>` itself
+  // (qq, wechat, twitter, apple, oauth). The shapes diverge enough — PKCE, JWT
+  // id_token, form_post body, weibo's token-in-query — that a one-size handler
+  // here would force all providers through the same Request -> credentials
+  // shape. Keeping it provider-local trades a bit of repetition for clarity.
 
   // Challenge (e.g. send verification code)
   ctx.server.post('/sso/challenge/:provider', async (req) => {

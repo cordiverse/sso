@@ -3,6 +3,7 @@
   "compilerOptions": {
     "paths": {
       "@cordisjs/sms": ["./packages/sms/core/src"],
+      "@cordisjs/oauth-utils": ["./packages/oauth-utils/src"],
       "@cordisjs/plugin-sso": ["./packages/core/src"],
       "@cordisjs/plugin-sso-*": [
         "./packages/*/src",

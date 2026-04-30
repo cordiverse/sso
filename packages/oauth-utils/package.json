@@ -1,0 +1,24 @@
+{
+  "name": "@cordisjs/oauth-utils",
+  "version": "0.1.0",
+  "description": "Shared OAuth 2.0 helpers for SSO providers (PKCE store, callback response builder)",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "files": [
+    "lib"
+  ],
+  "peerDependencies": {
+    "@cordisjs/plugin-timer": "^1.1.1",
+    "cordis": "^4.0.0-rc.4"
+  },
+  "devDependencies": {
+    "@cordisjs/plugin-timer": "^1.1.1",
+    "@sinonjs/fake-timers": "^6.0.1",
+    "@types/chai": "^5.2.3",
+    "@types/mocha": "^10.0.10",
+    "@types/sinonjs__fake-timers": "^6.0.4",
+    "chai": "^5.3.3",
+    "cordis": "^4.0.0-rc.4"
+  }
+}
