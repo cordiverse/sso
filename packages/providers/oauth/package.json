@@ -8,6 +8,17 @@
   "files": [
     "lib"
   ],
+  "author": "Shigma <shigma10826@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cordiverse/sso.git",
+    "directory": "packages/providers/oauth"
+  },
+  "bugs": {
+    "url": "https://github.com/cordiverse/sso/issues"
+  },
+  "homepage": "https://github.com/cordiverse/sso",
   "peerDependencies": {
     "@cordisjs/oauth-utils": "^0.1.0",
     "@cordisjs/plugin-database": "^4.0.1",
