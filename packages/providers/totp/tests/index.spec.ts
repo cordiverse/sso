@@ -71,7 +71,7 @@ describe('@cordisjs/plugin-sso-totp', () => {
       expect(data.otpauthUrl).to.include('digits=6')
       expect(data.otpauthUrl).to.include('period=30')
 
-      const [row] = await ctx.database.get('sso_totp' as any, { identityId })
+      const [row] = await ctx.database.get('sso.totp' as any, { identityId })
       expect(row.verified).to.equal(false)
       expect(row.label).to.equal('alice@example.com')
     })
@@ -117,7 +117,7 @@ describe('@cordisjs/plugin-sso-totp', () => {
       const ok = await provider.verify!(String(identityId), code)
       expect(ok).to.equal(true)
 
-      const [row] = await ctx.database.get('sso_totp' as any, { identityId })
+      const [row] = await ctx.database.get('sso.totp' as any, { identityId })
       expect(row.verified).to.equal(true)
 
       const resolved = await provider.resolve!({ identityId, code })

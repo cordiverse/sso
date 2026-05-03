@@ -1,6 +1,7 @@
 import { Context, Inject } from 'cordis'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { SsoProvider } from '@cordisjs/plugin-sso'
+import type { Database } from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-timer'
 import type {} from '@cordisjs/sms'
@@ -11,7 +12,7 @@ function randomDigits(length: number): string {
 
 declare module '@cordisjs/plugin-database' {
   interface Tables {
-    sso_sms: SsoSms
+    'sso.sms': SsoSms
   }
 }
 
@@ -53,7 +54,7 @@ export default class SmsProvider extends SsoProvider {
     this.autoRegister = config.autoRegister ?? true
     this.template = config.template ?? 'Your verification code is {code}'
 
-    ctx.database.extend('sso_sms', {
+    ctx.database.extend('sso.sms', {
       identityId: 'unsigned(8)',
       phone: 'string(255)',
       verified: { type: 'boolean', initial: false },
@@ -99,18 +100,17 @@ export default class SmsProvider extends SsoProvider {
   async resolve(credentials: any) {
     const { phone } = credentials
     if (!phone) return null
-    const [record] = await this.ctx.database.get('sso_sms', { phone })
+    const [record] = await this.ctx.database.get('sso.sms', { phone })
     if (!record) return null
     return { identityId: record.identityId }
   }
 
-  async register(credentials: any) {
+  async register(credentials: any, db: Database = this.ctx.database) {
     const { identityId, phone } = credentials
     if (!identityId) throw new Error('identityId required')
     if (!phone) throw new Error('phone required')
-    const [existing] = await this.ctx.database.get('sso_sms', { phone })
+    const [existing] = await db.get('sso.sms', { phone })
     if (existing) throw new Error('phone already registered')
-    await this.ctx.database.create('sso_sms', { identityId, phone, verified: true })
-    return {}
+    await db.create('sso.sms', { identityId, phone, verified: true })
   }
 }

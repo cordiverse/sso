@@ -1,13 +1,14 @@
 import { Context, Inject } from 'cordis'
 import { SsoProvider } from '@cordisjs/plugin-sso'
 import { callbackResponse, StateStore } from '@cordisjs/oauth-utils'
+import type { Database } from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-server'
 import type {} from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-timer'
 
 declare module '@cordisjs/plugin-database' {
   interface Tables {
-    sso_qq: SsoQq
+    'sso.qq': SsoQq
   }
 }
 
@@ -48,7 +49,7 @@ export default class QqProvider extends SsoProvider {
 
     this.state = new StateStore(ctx)
 
-    ctx.database.extend('sso_qq', {
+    ctx.database.extend('sso.qq', {
       identityId: 'unsigned(8)',
       openId: 'string(255)',
       unionId: 'string(255)',
@@ -135,9 +136,9 @@ export default class QqProvider extends SsoProvider {
     const { access_token, refresh_token, expires_in } = tokenData
     const meData = await this.getOpenId(access_token)
     const userInfo = await this.getUserInfo(access_token, meData.openid)
-    const [existing] = await this.ctx.database.get('sso_qq', { openId: meData.openid })
+    const [existing] = await this.ctx.database.get('sso.qq', { openId: meData.openid })
     if (existing) {
-      await this.ctx.database.set('sso_qq', { identityId: existing.identityId }, {
+      await this.ctx.database.set('sso.qq', { identityId: existing.identityId }, {
         accessToken: access_token,
         refreshToken: refresh_token,
         unionId: meData.unionid,
@@ -150,13 +151,13 @@ export default class QqProvider extends SsoProvider {
     return null
   }
 
-  async register(credentials: any) {
+  async register(credentials: any, db: Database = this.ctx.database) {
     const { identityId, code, redirect_uri } = credentials
     if (!identityId) throw new Error('identityId required')
     const tokenData = await this.getAccessToken(code, redirect_uri)
     const meData = await this.getOpenId(tokenData.access_token)
     const userInfo = await this.getUserInfo(tokenData.access_token, meData.openid)
-    await this.ctx.database.create('sso_qq', {
+    await db.create('sso.qq', {
       identityId,
       openId: meData.openid,
       unionId: meData.unionid,
@@ -166,6 +167,5 @@ export default class QqProvider extends SsoProvider {
       avatar: userInfo.figureurl_qq_2 ?? userInfo.figureurl_qq_1,
       tokenExpiresAt: tokenData.expires_in ? new Date(Date.now() + +tokenData.expires_in * 1000) : undefined,
     })
-    return {}
   }
 }

@@ -30,7 +30,7 @@ describe('@cordisjs/plugin-sso-password', () => {
       const { identityId } = await ctx.sso.createUser('password')
       const provider = ctx.sso.getProvider('password')!
       await provider.register!({ identityId, username: 'alice', password: 'longenough' })
-      const [row] = await ctx.database.get('sso_password' as any, { username: 'alice' })
+      const [row] = await ctx.database.get('sso.password' as any, { username: 'alice' })
       expect(row).to.exist
       expect(row.username).to.equal('alice')
       expect(row.hash).not.to.equal('longenough')
@@ -125,7 +125,7 @@ describe('@cordisjs/plugin-sso-password', () => {
       const { identityId } = await ctx.sso.createUser('password')
       const provider = ctx.sso.getProvider('password')!
       await provider.register!({ identityId, username: 'alice', password: 'longenough' })
-      const [row] = await ctx.database.get('sso_password' as any, { username: 'alice' })
+      const [row] = await ctx.database.get('sso.password' as any, { username: 'alice' })
       expect(row.hash).to.have.length(128) // 512 bits = 64 bytes = 128 hex
     })
   })

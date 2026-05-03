@@ -1,5 +1,6 @@
 import { Context, Inject, Service } from 'cordis'
 import type { Awaitable } from 'cosmokit'
+import type { Database } from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-database'
 import { randomUUID } from 'node:crypto'
 
@@ -36,7 +37,7 @@ export abstract class SsoProvider {
   }
 
   resolve?(credentials: any): Promise<{ identityId: number; data?: any } | null>
-  register?(credentials: any): Promise<{ data?: any }>
+  register?(credentials: any, db?: Database): Promise<{ data?: any } | void>
   getAuthUrl?(redirectUri: string, state: string): string
   challenge?(target: any): Promise<{ challengeId: string }>
   verify?(challengeId: string, response: string): Promise<boolean>
@@ -148,13 +149,13 @@ export class Sso extends Service {
     return this.ctx.waterfall('sso/provider-meta', base, () => base)
   }
 
-  async createUser(provider: string): Promise<{ user: User; identityId: number }> {
+  async createUser(provider: string, db: Database = this.ctx.database): Promise<{ user: User; identityId: number }> {
     const now = new Date()
-    const user = await this.ctx.database.create('sso.user', {
+    const user = await db.create('sso.user', {
       createdAt: now,
       updatedAt: now,
     })
-    const identity = await this.ctx.database.create('sso.identity', {
+    const identity = await db.create('sso.identity', {
       userId: user.id,
       provider,
       createdAt: now,
@@ -167,15 +168,15 @@ export class Sso extends Service {
     return user ?? null
   }
 
-  async link(userId: number, provider: string): Promise<{ identityId: number }> {
+  async link(userId: number, provider: string, db: Database = this.ctx.database): Promise<{ identityId: number }> {
     const now = new Date()
-    const identity = await this.ctx.database.create('sso.identity', {
+    const identity = await db.create('sso.identity', {
       userId,
       provider,
       createdAt: now,
     })
     // update user.updatedAt
-    await this.ctx.database.set('sso.user', { id: userId }, { updatedAt: now })
+    await db.set('sso.user', { id: userId }, { updatedAt: now })
     return { identityId: identity.id }
   }
 
@@ -202,11 +203,11 @@ export class Sso extends Service {
     return identity ?? null
   }
 
-  async createSession(userId: number, identityId: number): Promise<string> {
+  async createSession(userId: number, identityId: number, db: Database = this.ctx.database): Promise<string> {
     const now = new Date()
     const maxAge = this.config.sessionMaxAge ?? 7 * 24 * 60 * 60 * 1000 // 7 days
     const token = randomUUID()
-    await this.ctx.database.create('sso.session', {
+    await db.create('sso.session', {
       token,
       userId,
       identityId,

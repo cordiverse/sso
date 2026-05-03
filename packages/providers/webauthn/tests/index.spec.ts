@@ -50,7 +50,7 @@ describe('@cordisjs/plugin-sso-webauthn', () => {
       const ok = await provider.verify!(challengeId, JSON.stringify({ ...attestation, identityId }))
       expect(ok).to.equal(true)
 
-      const rows = await ctx.database.get('sso_webauthn' as any, { identityId })
+      const rows = await ctx.database.get('sso.webauthn' as any, { identityId })
       expect(rows).to.have.length(1)
       const [row] = rows
       expect(row.credentialId).to.equal(attestation.id)
@@ -71,7 +71,7 @@ describe('@cordisjs/plugin-sso-webauthn', () => {
       const ok = await provider.verify!(challengeId, JSON.stringify(attestation))
       expect(ok).to.equal(true)
 
-      const rows = await ctx.database.get('sso_webauthn' as any, {})
+      const rows = await ctx.database.get('sso.webauthn' as any, {})
       expect(rows).to.have.length(0)
     })
   })
@@ -103,14 +103,14 @@ describe('@cordisjs/plugin-sso-webauthn', () => {
 
     it('verifies a real assertion and bumps signCount + lastUsedAt', async () => {
       const provider = ctx.sso.getProvider('webauthn')!
-      const [before] = await ctx.database.get('sso_webauthn' as any, { credentialId })
+      const [before] = await ctx.database.get('sso.webauthn' as any, { credentialId })
 
       const { challengeId, data: options } = await provider.challenge!({ userId }) as any
       const assertion = emulator.getJSON(ORIGIN, options)
       const ok = await provider.verify!(challengeId, JSON.stringify(assertion))
       expect(ok).to.equal(true)
 
-      const [after] = await ctx.database.get('sso_webauthn' as any, { credentialId })
+      const [after] = await ctx.database.get('sso.webauthn' as any, { credentialId })
       expect(after.signCount).to.be.greaterThan(before.signCount)
       expect(after.lastUsedAt).to.be.instanceOf(Date)
     })
@@ -183,7 +183,7 @@ describe('@cordisjs/plugin-sso-webauthn', () => {
         deviceType: 'singleDevice',
         backedUp: false,
       })
-      const [row] = await ctx.database.get('sso_webauthn' as any, { credentialId: 'cred-xyz' })
+      const [row] = await ctx.database.get('sso.webauthn' as any, { credentialId: 'cred-xyz' })
       expect(row).to.exist
       expect(row.identityId).to.equal(identityId)
     })

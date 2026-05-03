@@ -1,13 +1,14 @@
 import { Context, Inject } from 'cordis'
 import { SsoProvider } from '@cordisjs/plugin-sso'
 import { callbackResponse, StateStore } from '@cordisjs/oauth-utils'
+import type { Database } from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-server'
 import type {} from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-timer'
 
 declare module '@cordisjs/plugin-database' {
   interface Tables {
-    sso_wechat: SsoWeChat
+    'sso.wechat': SsoWeChat
   }
 }
 
@@ -44,7 +45,7 @@ export default class WeChatProvider extends SsoProvider {
 
     this.state = new StateStore(ctx)
 
-    ctx.database.extend('sso_wechat', {
+    ctx.database.extend('sso.wechat', {
       identityId: 'unsigned(8)',
       openId: 'string(255)',
       unionId: 'string(255)',
@@ -118,9 +119,9 @@ export default class WeChatProvider extends SsoProvider {
     if (tokenData.errcode) return null
     const { access_token, openid, unionid, refresh_token, expires_in } = tokenData
     const userInfo = await this.getUserInfo(access_token, openid)
-    const [existing] = await this.ctx.database.get('sso_wechat', { openId: openid })
+    const [existing] = await this.ctx.database.get('sso.wechat', { openId: openid })
     if (existing) {
-      await this.ctx.database.set('sso_wechat', { identityId: existing.identityId }, {
+      await this.ctx.database.set('sso.wechat', { identityId: existing.identityId }, {
         accessToken: access_token,
         refreshToken: refresh_token,
         unionId: unionid,
@@ -133,13 +134,13 @@ export default class WeChatProvider extends SsoProvider {
     return null
   }
 
-  async register(credentials: any) {
+  async register(credentials: any, db: Database = this.ctx.database) {
     const { identityId, code } = credentials
     if (!identityId) throw new Error('identityId required')
     const tokenData = await this.getAccessToken(code)
     const { access_token, openid, unionid, refresh_token, expires_in } = tokenData
     const userInfo = await this.getUserInfo(access_token, openid)
-    await this.ctx.database.create('sso_wechat', {
+    await db.create('sso.wechat', {
       identityId,
       openId: openid,
       unionId: unionid,
@@ -149,6 +150,5 @@ export default class WeChatProvider extends SsoProvider {
       avatar: userInfo.headimgurl,
       tokenExpiresAt: expires_in ? new Date(Date.now() + expires_in * 1000) : undefined,
     })
-    return {}
   }
 }

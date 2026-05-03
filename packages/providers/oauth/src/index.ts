@@ -1,13 +1,14 @@
 import { Context, Inject } from 'cordis'
 import { SsoProvider } from '@cordisjs/plugin-sso'
 import { callbackResponse, decodeJwtPayload, PkceStore, StateStore } from '@cordisjs/oauth-utils'
+import type { Database } from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-server'
 import type {} from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-timer'
 
 declare module '@cordisjs/plugin-database' {
   interface Tables {
-    sso_oauth: SsoOAuth
+    'sso.oauth': SsoOAuth
   }
 }
 
@@ -311,7 +312,7 @@ export default class OAuthProvider extends SsoProvider {
       this.state = new StateStore(ctx)
     }
 
-    ctx.database.extend('sso_oauth', {
+    ctx.database.extend('sso.oauth', {
       identityId: 'unsigned(8)',
       provider: 'string(255)',
       externalId: 'string(255)',
@@ -441,11 +442,11 @@ export default class OAuthProvider extends SsoProvider {
       ? decodeJwtPayload(tokenData.id_token)
       : await this.fetchUserInfo(accessToken)
     const userInfo = this.preset.extractUser(userInfoData)
-    const [existing] = await this.ctx.database.get('sso_oauth', {
+    const [existing] = await this.ctx.database.get('sso.oauth', {
       provider: this.name, externalId: userInfo.externalId,
     })
     if (existing) {
-      await this.ctx.database.set('sso_oauth', { identityId: existing.identityId }, {
+      await this.ctx.database.set('sso.oauth', { identityId: existing.identityId }, {
         accessToken,
         refreshToken: tokenData.refresh_token ?? existing.refreshToken,
         displayName: userInfo.displayName,
@@ -461,7 +462,7 @@ export default class OAuthProvider extends SsoProvider {
     return null
   }
 
-  async register(credentials: any) {
+  async register(credentials: any, db: Database = this.ctx.database) {
     const { identityId, code, state } = credentials
     if (!identityId) throw new Error('identityId required')
     let redirectUri: string | undefined
@@ -483,7 +484,7 @@ export default class OAuthProvider extends SsoProvider {
       ? decodeJwtPayload(tokenData.id_token)
       : await this.fetchUserInfo(accessToken)
     const userInfo = this.preset.extractUser(userInfoData)
-    await this.ctx.database.create('sso_oauth', {
+    await db.create('sso.oauth', {
       identityId,
       provider: this.name,
       externalId: userInfo.externalId,
@@ -495,6 +496,5 @@ export default class OAuthProvider extends SsoProvider {
       scope: this.scope,
       tokenExpiresAt: tokenData.expires_in ? new Date(Date.now() + tokenData.expires_in * 1000) : undefined,
     })
-    return {}
   }
 }

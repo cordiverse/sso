@@ -1,13 +1,14 @@
 import { Context, Inject } from 'cordis'
 import { SsoProvider } from '@cordisjs/plugin-sso'
 import { callbackResponse, PkceStore } from '@cordisjs/oauth-utils'
+import type { Database } from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-server'
 import type {} from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-timer'
 
 declare module '@cordisjs/plugin-database' {
   interface Tables {
-    sso_twitter: SsoTwitter
+    'sso.twitter': SsoTwitter
   }
 }
 
@@ -43,7 +44,7 @@ export default class TwitterProvider extends SsoProvider {
 
     this.pkce = new PkceStore(ctx)
 
-    ctx.database.extend('sso_twitter', {
+    ctx.database.extend('sso.twitter', {
       identityId: 'unsigned(8)',
       twitterId: 'string(255)',
       username: 'string(255)',
@@ -123,9 +124,9 @@ export default class TwitterProvider extends SsoProvider {
     const { access_token, refresh_token, expires_in } = tokenData
     const user = await this.fetchUser(access_token)
 
-    const [existing] = await this.ctx.database.get('sso_twitter', { twitterId: user.id })
+    const [existing] = await this.ctx.database.get('sso.twitter', { twitterId: user.id })
     if (existing) {
-      await this.ctx.database.set('sso_twitter', { identityId: existing.identityId }, {
+      await this.ctx.database.set('sso.twitter', { identityId: existing.identityId }, {
         accessToken: access_token,
         refreshToken: refresh_token,
         username: user.username,
@@ -138,7 +139,7 @@ export default class TwitterProvider extends SsoProvider {
     return null
   }
 
-  async register(credentials: any) {
+  async register(credentials: any, db: Database = this.ctx.database) {
     const { identityId, code, state } = credentials
     if (!identityId) throw new Error('identityId required')
     const pkce = this.pkce.consume(state)
@@ -147,7 +148,7 @@ export default class TwitterProvider extends SsoProvider {
     const tokenData = await this.exchangeToken(code, pkce.redirectUri, pkce.codeVerifier)
     const user = await this.fetchUser(tokenData.access_token)
 
-    await this.ctx.database.create('sso_twitter', {
+    await db.create('sso.twitter', {
       identityId,
       twitterId: user.id,
       username: user.username,
@@ -157,6 +158,5 @@ export default class TwitterProvider extends SsoProvider {
       avatar: user.profile_image_url,
       tokenExpiresAt: tokenData.expires_in ? new Date(Date.now() + tokenData.expires_in * 1000) : undefined,
     })
-    return {}
   }
 }

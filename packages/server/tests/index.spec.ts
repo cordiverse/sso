@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto'
 import { Context } from 'cordis'
 import Database from '@cordisjs/plugin-database'
 import MemoryDriver from '@cordisjs/plugin-database-memory'
@@ -67,7 +68,7 @@ async function registerPasswordUser(ctx: Context, username: string, password: st
 }
 
 async function loginAndGetToken(baseUrl: string, username: string, password: string) {
-  const res = await fetch(`${baseUrl}/sso/auth/password`, {
+  const res = await fetch(`${baseUrl}/sso/sessions/password`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ username, password }),
@@ -114,10 +115,10 @@ describe('@cordisjs/plugin-sso-server', () => {
     })
   })
 
-  describe('POST /sso/auth/:provider', () => {
+  describe('POST /sso/sessions/:provider', () => {
     it('returns 404 for unknown provider', async () => {
       ({ ctx, baseUrl } = await setup())
-      const res = await fetch(`${baseUrl}/sso/auth/nope`, { method: 'POST', body: '{}' })
+      const res = await fetch(`${baseUrl}/sso/sessions/nope`, { method: 'POST', body: '{}' })
       expect(res.status).to.equal(404)
       expect(await res.json()).to.deep.equal({ error: 'PROVIDER_NOT_FOUND' })
     })
@@ -126,7 +127,7 @@ describe('@cordisjs/plugin-sso-server', () => {
       ({ ctx, baseUrl } = await setup())
       await ctx.plugin(NoResolveProvider)
       await sleep()
-      const res = await fetch(`${baseUrl}/sso/auth/no-resolve`, { method: 'POST', body: '{}' })
+      const res = await fetch(`${baseUrl}/sso/sessions/no-resolve`, { method: 'POST', body: '{}' })
       expect(res.status).to.equal(400)
       expect(await res.json()).to.deep.equal({ error: 'RESOLVE_NOT_SUPPORTED' })
     })
@@ -134,7 +135,7 @@ describe('@cordisjs/plugin-sso-server', () => {
     it('returns a session token on successful credentials', async () => {
       ({ ctx, baseUrl } = await setup())
       await registerPasswordUser(ctx, 'alice', 'longenough')
-      const res = await fetch(`${baseUrl}/sso/auth/password`, {
+      const res = await fetch(`${baseUrl}/sso/sessions/password`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ username: 'alice', password: 'longenough' }),
@@ -146,23 +147,23 @@ describe('@cordisjs/plugin-sso-server', () => {
       expect(validated).to.exist
     })
 
-    it('returns 401 ACCOUNT_NOT_FOUND on bad credentials (no autoRegister)', async () => {
+    it('returns 401 INVALID_CREDENTIALS on bad credentials (no autoRegister)', async () => {
       ({ ctx, baseUrl } = await setup())
       await registerPasswordUser(ctx, 'alice', 'longenough')
-      const res = await fetch(`${baseUrl}/sso/auth/password`, {
+      const res = await fetch(`${baseUrl}/sso/sessions/password`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ username: 'alice', password: 'wrong-password' }),
       })
       expect(res.status).to.equal(401)
-      expect(await res.json()).to.deep.equal({ error: 'ACCOUNT_NOT_FOUND' })
+      expect(await res.json()).to.deep.equal({ error: 'INVALID_CREDENTIALS' })
     })
 
     it('falls through to register + token when provider.autoRegister is true', async () => {
       ({ ctx, baseUrl } = await setup())
       await ctx.plugin(AutoRegProvider)
       await sleep()
-      const res = await fetch(`${baseUrl}/sso/auth/auto-reg`, { method: 'POST', body: '{}' })
+      const res = await fetch(`${baseUrl}/sso/sessions/auto-reg`, { method: 'POST', body: '{}' })
       expect(res.status).to.equal(200)
       const body = await res.json() as any
       expect(body.token).to.be.a('string')
@@ -170,10 +171,10 @@ describe('@cordisjs/plugin-sso-server', () => {
     })
   })
 
-  describe('POST /sso/register/:provider', () => {
+  describe('POST /sso/users/:provider', () => {
     it('creates a user and returns a token', async () => {
       ({ ctx, baseUrl } = await setup())
-      const res = await fetch(`${baseUrl}/sso/register/password`, {
+      const res = await fetch(`${baseUrl}/sso/users/password`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ username: 'bob', password: 'longenough' }),
@@ -182,21 +183,54 @@ describe('@cordisjs/plugin-sso-server', () => {
       const body = await res.json() as any
       expect(body.token).to.be.a('string')
       expect(body.userId).to.be.a('number')
-      const [row] = await ctx.database.get('sso_password' as any, { username: 'bob' })
+      const [row] = await ctx.database.get('sso.password' as any, { username: 'bob' })
       expect(row).to.exist
     })
 
     it('returns 404 for unknown provider', async () => {
       ({ ctx, baseUrl } = await setup())
-      const res = await fetch(`${baseUrl}/sso/register/nope`, { method: 'POST', body: '{}' })
+      const res = await fetch(`${baseUrl}/sso/users/nope`, { method: 'POST', body: '{}' })
       expect(res.status).to.equal(404)
+    })
+
+    it('rolls back user + identity when provider.register throws', async () => {
+      ({ ctx, baseUrl } = await setup())
+      // password < minLength (8) makes the password provider throw from register.
+      // Before the transaction fix this left orphan rows in sso.user + sso.identity.
+      const res = await fetch(`${baseUrl}/sso/users/password`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'carol', password: 'short' }),
+      })
+      expect(res.status).to.equal(500)
+      expect(await ctx.database.get('sso.user', {})).to.have.length(0)
+      expect(await ctx.database.get('sso.identity', {})).to.have.length(0)
+      expect(await ctx.database.get('sso.password' as any, {})).to.have.length(0)
+    })
+
+    it('rolls back when username is already taken', async () => {
+      ({ ctx, baseUrl } = await setup())
+      await registerPasswordUser(ctx, 'alice', 'longenough')
+      const usersBefore = await ctx.database.get('sso.user', {})
+      const identitiesBefore = await ctx.database.get('sso.identity', {})
+      const passwordsBefore = await ctx.database.get('sso.password' as any, {})
+
+      const res = await fetch(`${baseUrl}/sso/users/password`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'alice', password: 'anotherlongone' }),
+      })
+      expect(res.status).to.equal(500)
+      expect(await ctx.database.get('sso.user', {})).to.have.length(usersBefore.length)
+      expect(await ctx.database.get('sso.identity', {})).to.have.length(identitiesBefore.length)
+      expect(await ctx.database.get('sso.password' as any, {})).to.have.length(passwordsBefore.length)
     })
   })
 
-  describe('GET /sso/auth/:provider (auth url)', () => {
+  describe('GET /sso/oauth-url/:provider', () => {
     it('returns 400 OAUTH_NOT_SUPPORTED for providers without getAuthUrl', async () => {
       ({ ctx, baseUrl } = await setup())
-      const res = await fetch(`${baseUrl}/sso/auth/password?redirect_uri=cb&state=s`)
+      const res = await fetch(`${baseUrl}/sso/oauth-url/password?redirect_uri=cb&state=s`)
       expect(res.status).to.equal(400)
       expect(await res.json()).to.deep.equal({ error: 'OAUTH_NOT_SUPPORTED' })
     })
@@ -205,7 +239,7 @@ describe('@cordisjs/plugin-sso-server', () => {
       ({ ctx, baseUrl } = await setup())
       await ctx.plugin(OAuthFakeProvider)
       await sleep()
-      const res = await fetch(`${baseUrl}/sso/auth/oauth-fake?redirect_uri=https%3A%2F%2Fapp%2Fcb&state=xyz`)
+      const res = await fetch(`${baseUrl}/sso/oauth-url/oauth-fake?redirect_uri=https%3A%2F%2Fapp%2Fcb&state=xyz`)
       expect(res.status).to.equal(200)
       const body = await res.json() as any
       expect(body.url).to.include('https://example.com/auth')
@@ -275,11 +309,11 @@ describe('@cordisjs/plugin-sso-server', () => {
       expect(list[0].provider).to.equal('password')
     })
 
-    it('POST /sso/link/:provider links a new identity', async () => {
+    it('POST /sso/identities/:provider links a new identity', async () => {
       ({ ctx, baseUrl } = await setup())
       await registerPasswordUser(ctx, 'alice', 'longenough')
       const token = await loginAndGetToken(baseUrl, 'alice', 'longenough')
-      const res = await fetch(`${baseUrl}/sso/link/totp`, {
+      const res = await fetch(`${baseUrl}/sso/identities/totp`, {
         method: 'POST',
         headers: { authorization: `Bearer ${token}` },
       })
@@ -288,26 +322,26 @@ describe('@cordisjs/plugin-sso-server', () => {
       expect(body.identityId).to.be.a('number')
     })
 
-    it('POST /sso/unlink/:id refuses to remove someone else\'s identity', async () => {
+    it('DELETE /sso/identities/:id refuses to remove someone else\'s identity', async () => {
       ({ ctx, baseUrl } = await setup())
       await registerPasswordUser(ctx, 'alice', 'longenough')
       const { identityId: bobsId } = await registerPasswordUser(ctx, 'bob', 'longenough')
       const aliceToken = await loginAndGetToken(baseUrl, 'alice', 'longenough')
-      const res = await fetch(`${baseUrl}/sso/unlink/${bobsId}`, {
-        method: 'POST',
+      const res = await fetch(`${baseUrl}/sso/identities/${bobsId}`, {
+        method: 'DELETE',
         headers: { authorization: `Bearer ${aliceToken}` },
       })
       expect(res.status).to.equal(404)
       expect(await res.json()).to.deep.equal({ error: 'IDENTITY_NOT_FOUND' })
     })
 
-    it('POST /sso/unlink/:id removes one of the caller\'s identities', async () => {
+    it('DELETE /sso/identities/:id removes one of the caller\'s identities', async () => {
       ({ ctx, baseUrl } = await setup())
       const { user } = await registerPasswordUser(ctx, 'alice', 'longenough')
       const { identityId: totpId } = await ctx.sso.link(user.id, 'totp')
       const token = await loginAndGetToken(baseUrl, 'alice', 'longenough')
-      const res = await fetch(`${baseUrl}/sso/unlink/${totpId}`, {
-        method: 'POST',
+      const res = await fetch(`${baseUrl}/sso/identities/${totpId}`, {
+        method: 'DELETE',
         headers: { authorization: `Bearer ${token}` },
       })
       expect(res.status).to.equal(200)
@@ -316,29 +350,26 @@ describe('@cordisjs/plugin-sso-server', () => {
       expect(remaining[0].provider).to.equal('password')
     })
 
-    it('POST /sso/logout invalidates the token', async () => {
+    it('DELETE /sso/sessions invalidates the token', async () => {
       ({ ctx, baseUrl } = await setup())
       await registerPasswordUser(ctx, 'alice', 'longenough')
       const token = await loginAndGetToken(baseUrl, 'alice', 'longenough')
-      const logout = await fetch(`${baseUrl}/sso/logout`, {
-        method: 'POST',
+      const logout = await fetch(`${baseUrl}/sso/sessions`, {
+        method: 'DELETE',
         headers: { authorization: `Bearer ${token}` },
       })
       expect(logout.status).to.equal(200)
       expect(await ctx.sso.validateSession(token)).to.be.null
     })
 
-    it('POST /sso/logout is a no-op without a token', async () => {
+    it('DELETE /sso/sessions is a no-op without a token', async () => {
       ({ ctx, baseUrl } = await setup())
-      const res = await fetch(`${baseUrl}/sso/logout`, { method: 'POST' })
+      const res = await fetch(`${baseUrl}/sso/sessions`, { method: 'DELETE' })
       expect(res.status).to.equal(200)
       expect(await res.json()).to.deep.equal({ ok: true })
     })
   })
 })
-
-// ---- TOTP code helper (mirrors algorithm in @cordisjs/plugin-sso-totp) ----
-import { createHmac } from 'node:crypto'
 
 const BASE32_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
 

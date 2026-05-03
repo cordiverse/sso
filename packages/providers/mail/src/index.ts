@@ -1,6 +1,7 @@
 import { Context, Inject } from 'cordis'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { SsoProvider } from '@cordisjs/plugin-sso'
+import type { Database } from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-timer'
 
@@ -10,7 +11,7 @@ function randomDigits(length: number): string {
 
 declare module '@cordisjs/plugin-database' {
   interface Tables {
-    sso_mail: SsoMail
+    'sso.mail': SsoMail
   }
 }
 
@@ -51,7 +52,7 @@ export default class MailProvider extends SsoProvider {
     this.autoRegister = config.autoRegister ?? true
     this.send = config.send
 
-    ctx.database.extend('sso_mail', {
+    ctx.database.extend('sso.mail', {
       identityId: 'unsigned(8)',
       email: 'string(255)',
       verified: { type: 'boolean', initial: false },
@@ -96,18 +97,17 @@ export default class MailProvider extends SsoProvider {
   async resolve(credentials: any) {
     const { email } = credentials
     if (!email) return null
-    const [record] = await this.ctx.database.get('sso_mail', { email })
+    const [record] = await this.ctx.database.get('sso.mail', { email })
     if (!record) return null
     return { identityId: record.identityId }
   }
 
-  async register(credentials: any) {
+  async register(credentials: any, db: Database = this.ctx.database) {
     const { identityId, email } = credentials
     if (!identityId) throw new Error('identityId required')
     if (!email) throw new Error('email required')
-    const [existing] = await this.ctx.database.get('sso_mail', { email })
+    const [existing] = await db.get('sso.mail', { email })
     if (existing) throw new Error('email already registered')
-    await this.ctx.database.create('sso_mail', { identityId, email, verified: true })
-    return {}
+    await db.create('sso.mail', { identityId, email, verified: true })
   }
 }

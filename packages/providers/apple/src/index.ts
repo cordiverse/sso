@@ -2,13 +2,14 @@ import { Context, Inject } from 'cordis'
 import { createPrivateKey, createSign, randomBytes } from 'node:crypto'
 import { SsoProvider } from '@cordisjs/plugin-sso'
 import { callbackResponse, decodeJwtPayload, StateStore } from '@cordisjs/oauth-utils'
+import type { Database } from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-server'
 import type {} from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-timer'
 
 declare module '@cordisjs/plugin-database' {
   interface Tables {
-    sso_apple: SsoApple
+    'sso.apple': SsoApple
   }
 }
 
@@ -60,7 +61,7 @@ export default class AppleProvider extends SsoProvider {
 
     this.state = new StateStore(ctx)
 
-    ctx.database.extend('sso_apple', {
+    ctx.database.extend('sso.apple', {
       identityId: 'unsigned(8)',
       sub: 'string(255)',
       email: 'string(255)',
@@ -131,10 +132,10 @@ export default class AppleProvider extends SsoProvider {
     const idToken = decodeJWT(tokenData.id_token ?? id_token)
     if (nonce && idToken.nonce !== nonce) return null
     const displayName = this.parseUserName(userJson)
-    const [existing] = await this.ctx.database.get('sso_apple', { sub: idToken.sub })
+    const [existing] = await this.ctx.database.get('sso.apple', { sub: idToken.sub })
     if (existing) {
       if (tokenData.refresh_token) {
-        await this.ctx.database.set('sso_apple', { identityId: existing.identityId }, {
+        await this.ctx.database.set('sso.apple', { identityId: existing.identityId }, {
           refreshToken: tokenData.refresh_token, ...(displayName ? { displayName } : {}),
         })
       }
@@ -143,7 +144,7 @@ export default class AppleProvider extends SsoProvider {
     return null
   }
 
-  async register(credentials: any) {
+  async register(credentials: any, db: Database = this.ctx.database) {
     const { identityId, code, id_token, user: userJson, nonce } = credentials
     if (!identityId) throw new Error('identityId required')
     const clientSecret = generateClientSecret(this.config)
@@ -155,13 +156,12 @@ export default class AppleProvider extends SsoProvider {
     const tokenData = await tokenRes.json() as any
     const idToken = decodeJWT(tokenData.id_token ?? id_token)
     if (nonce && idToken.nonce !== nonce) throw new Error('nonce mismatch')
-    await this.ctx.database.create('sso_apple', {
+    await db.create('sso.apple', {
       identityId,
       sub: idToken.sub,
       email: idToken.email,
       displayName: this.parseUserName(userJson),
       refreshToken: tokenData.refresh_token,
     })
-    return {}
   }
 }
