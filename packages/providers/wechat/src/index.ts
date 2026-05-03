@@ -1,7 +1,6 @@
 import { Context, Inject } from 'cordis'
 import { SsoProvider } from '@cordisjs/plugin-sso'
-import { callbackResponse, StateStore } from '@cordisjs/oauth-utils'
-import type { Database } from '@cordisjs/plugin-database'
+import { callbackResponse, handleOAuthCallback, StateStore } from '@cordisjs/oauth-utils'
 import type {} from '@cordisjs/plugin-server'
 import type {} from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-timer'
@@ -66,19 +65,54 @@ export default class WeChatProvider extends SsoProvider {
       const state = url.searchParams.get('state')!
       const entry = this.state.consume(state)
       if (!entry) return callbackResponse({ error: 'INVALID_STATE', status: 400 }, this.config.redirectUrl)
-      const result = await this.resolve!({ code, state })
-      if (result) {
-        const identity = await ctx.sso.getIdentity(result.identityId)
-        const token = await ctx.sso.createSession(identity!.userId, identity!.id)
-        return callbackResponse({ token }, this.config.redirectUrl)
+      const linkUserId = entry.payload?.link?.userId as number | undefined
+
+      try {
+        const tokenData = await this.getAccessToken(code)
+        if (tokenData.errcode) {
+          return callbackResponse({ error: 'TOKEN_EXCHANGE_FAILED', status: 400 }, this.config.redirectUrl)
+        }
+        const { access_token, openid, unionid, refresh_token, expires_in } = tokenData
+        const userInfo = await this.getUserInfo(access_token, openid)
+
+        const [existing] = await this.ctx.database.get('sso.wechat', { openId: openid })
+        let resolveResult: { identityId: number } | null = null
+        if (existing) {
+          await this.ctx.database.set('sso.wechat', { identityId: existing.identityId }, {
+            accessToken: access_token,
+            refreshToken: refresh_token,
+            unionId: unionid,
+            displayName: userInfo.nickname,
+            avatar: userInfo.headimgurl,
+            tokenExpiresAt: expires_in ? new Date(Date.now() + expires_in * 1000) : undefined,
+          })
+          resolveResult = { identityId: existing.identityId }
+        }
+
+        return await handleOAuthCallback({
+          ctx,
+          providerName: 'wechat',
+          autoRegister: this.autoRegister,
+          linkUserId,
+          resolveResult,
+          registerFn: async (identityId, db) => {
+            await db.create('sso.wechat', {
+              identityId,
+              openId: openid,
+              unionId: unionid,
+              accessToken: access_token,
+              refreshToken: refresh_token,
+              displayName: userInfo.nickname,
+              avatar: userInfo.headimgurl,
+              tokenExpiresAt: expires_in ? new Date(Date.now() + expires_in * 1000) : undefined,
+            })
+          },
+          redirectUrl: this.config.redirectUrl,
+        })
+      } catch (e) {
+        console.warn('[sso-wechat]', e)
+        return callbackResponse({ error: 'OAUTH_CALLBACK_FAILED', status: 500 }, this.config.redirectUrl)
       }
-      if (this.autoRegister) {
-        const { user, identityId } = await ctx.sso.createUser('wechat')
-        await this.register!({ identityId, code })
-        const token = await ctx.sso.createSession(user.id, identityId)
-        return callbackResponse({ token }, this.config.redirectUrl)
-      }
-      return callbackResponse({ error: 'ACCOUNT_NOT_FOUND', status: 401 }, this.config.redirectUrl)
     })
   }
 
@@ -99,8 +133,8 @@ export default class WeChatProvider extends SsoProvider {
     return res.json() as Promise<any>
   }
 
-  getAuthUrl(redirectUri: string, state: string) {
-    this.state.register(state, redirectUri)
+  getAuthUrl(redirectUri: string, state: string, link?: { userId: number }) {
+    this.state.register(state, redirectUri, link ? { link } : undefined)
     const scope = this.config.scope ?? 'snsapi_login'
     const params = new URLSearchParams({
       appid: this.config.appId,
@@ -113,42 +147,8 @@ export default class WeChatProvider extends SsoProvider {
   }
 
   async resolve(credentials: any) {
-    const { code } = credentials
-    if (!code) return null
-    const tokenData = await this.getAccessToken(code)
-    if (tokenData.errcode) return null
-    const { access_token, openid, unionid, refresh_token, expires_in } = tokenData
-    const userInfo = await this.getUserInfo(access_token, openid)
-    const [existing] = await this.ctx.database.get('sso.wechat', { openId: openid })
-    if (existing) {
-      await this.ctx.database.set('sso.wechat', { identityId: existing.identityId }, {
-        accessToken: access_token,
-        refreshToken: refresh_token,
-        unionId: unionid,
-        displayName: userInfo.nickname,
-        avatar: userInfo.headimgurl,
-        tokenExpiresAt: expires_in ? new Date(Date.now() + expires_in * 1000) : undefined,
-      })
-      return { identityId: existing.identityId }
-    }
+    // The WeChat flow is driven by GET /sso/callback/wechat above; direct
+    // POST /sso/sessions/wechat is not a meaningful path.
     return null
-  }
-
-  async register(credentials: any, db: Database = this.ctx.database) {
-    const { identityId, code } = credentials
-    if (!identityId) throw new Error('identityId required')
-    const tokenData = await this.getAccessToken(code)
-    const { access_token, openid, unionid, refresh_token, expires_in } = tokenData
-    const userInfo = await this.getUserInfo(access_token, openid)
-    await db.create('sso.wechat', {
-      identityId,
-      openId: openid,
-      unionId: unionid,
-      accessToken: access_token,
-      refreshToken: refresh_token,
-      displayName: userInfo.nickname,
-      avatar: userInfo.headimgurl,
-      tokenExpiresAt: expires_in ? new Date(Date.now() + expires_in * 1000) : undefined,
-    })
   }
 }

@@ -82,30 +82,39 @@ export default class MailProvider extends SsoProvider {
     return { challengeId }
   }
 
-  async verify(challengeId: string, response: string) {
+  // Consume a challenge: returns true iff (challengeId, code) match and the
+  // stored email matches. One-shot — a successful call deletes the challenge
+  // so the same code can't be reused.
+  private consumeChallenge(email: string, challengeId: string, code: string): boolean {
     const challenge = this.challenges.get(challengeId)
     if (!challenge) return false
-    if (Date.now() > challenge.expiresAt) {
+    try {
+      if (Date.now() > challenge.expiresAt) return false
+      if (challenge.email !== email) return false
+      if (challenge.code !== code) return false
+      return true
+    } finally {
       this.challenges.delete(challengeId)
-      return false
     }
-    if (challenge.code !== response) return false
-    this.challenges.delete(challengeId)
-    return true
   }
 
   async resolve(credentials: any) {
-    const { email } = credentials
-    if (!email) return null
+    const { email, challengeId, code } = credentials
+    if (!email || !challengeId || !code) return null
+    if (!this.consumeChallenge(email, challengeId, code)) return null
     const [record] = await this.ctx.database.get('sso.mail', { email })
     if (!record) return null
     return { identityId: record.identityId }
   }
 
   async register(credentials: any, db: Database = this.ctx.database) {
-    const { identityId, email } = credentials
+    const { identityId, email, challengeId, code } = credentials
     if (!identityId) throw new Error('identityId required')
     if (!email) throw new Error('email required')
+    if (!challengeId || !code) throw new Error('challengeId and code required')
+    if (!this.consumeChallenge(email, challengeId, code)) {
+      throw new Error('verification failed')
+    }
     const [existing] = await db.get('sso.mail', { email })
     if (existing) throw new Error('email already registered')
     await db.create('sso.mail', { identityId, email, verified: true })

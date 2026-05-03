@@ -6,6 +6,7 @@ import Server from '@cordisjs/plugin-server'
 import Timer from '@cordisjs/plugin-timer'
 import Sso, { SsoProvider } from '@cordisjs/plugin-sso'
 import Password from '@cordisjs/plugin-sso-password'
+import Mail from '@cordisjs/plugin-sso-mail'
 import Totp from '@cordisjs/plugin-sso-totp'
 import { expect } from 'chai'
 import { name, inject, apply } from '../src'
@@ -33,7 +34,9 @@ class OAuthFakeProvider extends SsoProvider {
   name = 'oauth-fake'
   interactive = true
   autoRegister = true
-  getAuthUrl(redirectUri: string, state: string) {
+  lastLinkUserId: number | undefined
+  getAuthUrl(redirectUri: string, state: string, link?: { userId: number }) {
+    this.lastLinkUserId = link?.userId
     return `https://example.com/auth?redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`
   }
   async resolve() { return null }
@@ -41,6 +44,8 @@ class OAuthFakeProvider extends SsoProvider {
 }
 
 let portCursor = 31000
+
+const mailbox: { email: string; code: string }[] = []
 
 async function setup() {
   const ctx = new Context()
@@ -51,6 +56,7 @@ async function setup() {
   await ctx.plugin(Sso)
   await ctx.plugin(Password)
   await ctx.plugin(Totp)
+  await ctx.plugin(Mail, { send: async (email, code) => { mailbox.push({ email, code }) } })
   await ctx.plugin(SsoServer)
   await sleep()
   return { ctx, baseUrl: ctx.server.baseUrl }
@@ -93,7 +99,7 @@ describe('@cordisjs/plugin-sso-server', () => {
       expect(res.status).to.equal(200)
       const body = await res.json() as any[]
       const names = body.map(p => p.name).sort()
-      expect(names).to.deep.equal(['password', 'totp'])
+      expect(names).to.deep.equal(['mail', 'password', 'totp'])
       expect(body.find(p => p.name === 'password')).to.include({
         interactive: true, autoRegister: false,
       })
@@ -225,6 +231,24 @@ describe('@cordisjs/plugin-sso-server', () => {
       expect(await ctx.database.get('sso.identity', {})).to.have.length(identitiesBefore.length)
       expect(await ctx.database.get('sso.password' as any, {})).to.have.length(passwordsBefore.length)
     })
+
+    it('register → GET /sso/me with the returned token works', async () => {
+      ({ ctx, baseUrl } = await setup())
+      const regRes = await fetch(`${baseUrl}/sso/users/password`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'dave', password: 'longenough' }),
+      })
+      expect(regRes.status).to.equal(200)
+      const { token } = await regRes.json() as any
+      expect(token).to.be.a('string')
+      const meRes = await fetch(`${baseUrl}/sso/me`, {
+        headers: { authorization: `Bearer ${token}` },
+      })
+      expect(meRes.status).to.equal(200)
+      const me = await meRes.json() as any
+      expect(me.id).to.be.a('number')
+    })
   })
 
   describe('GET /sso/oauth-url/:provider', () => {
@@ -244,6 +268,28 @@ describe('@cordisjs/plugin-sso-server', () => {
       const body = await res.json() as any
       expect(body.url).to.include('https://example.com/auth')
       expect(body.url).to.include('state=xyz')
+    })
+
+    it('intent=link requires a session and forwards userId to getAuthUrl', async () => {
+      ({ ctx, baseUrl } = await setup())
+      await ctx.plugin(OAuthFakeProvider)
+      await sleep()
+
+      // Without session -> 401
+      const unauth = await fetch(`${baseUrl}/sso/oauth-url/oauth-fake?redirect_uri=cb&state=s&intent=link`)
+      expect(unauth.status).to.equal(401)
+      expect(await unauth.json()).to.deep.equal({ error: 'SESSION_REQUIRED' })
+
+      // With session -> 200; provider sees the caller's userId
+      const { user } = await registerPasswordUser(ctx, 'alice', 'longenough')
+      const token = await loginAndGetToken(baseUrl, 'alice', 'longenough')
+      const instance = ctx.sso.getProvider('oauth-fake') as any as OAuthFakeProvider
+      instance.lastLinkUserId = undefined
+      const auth = await fetch(`${baseUrl}/sso/oauth-url/oauth-fake?redirect_uri=cb&state=s&intent=link`, {
+        headers: { authorization: `Bearer ${token}` },
+      })
+      expect(auth.status).to.equal(200)
+      expect(instance.lastLinkUserId).to.equal(user.id)
     })
   })
 
@@ -320,6 +366,80 @@ describe('@cordisjs/plugin-sso-server', () => {
       expect(res.status).to.equal(200)
       const body = await res.json() as any
       expect(body.identityId).to.be.a('number')
+    })
+
+    it('POST /sso/identities/:provider with credentials writes the provider row', async () => {
+      ({ ctx, baseUrl } = await setup())
+      const { user } = await registerPasswordUser(ctx, 'alice', 'longenough')
+      const token = await loginAndGetToken(baseUrl, 'alice', 'longenough')
+      const res = await fetch(`${baseUrl}/sso/identities/totp`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ label: 'alice@laptop' }),
+      })
+      expect(res.status).to.equal(200)
+      const body = await res.json() as any
+      expect(body.identityId).to.be.a('number')
+      expect(body.data?.otpauthUrl).to.include('otpauth://totp/')
+      const [row] = await ctx.database.get('sso.totp' as any, { identityId: body.identityId })
+      expect(row).to.exist
+      expect(row.label).to.equal('alice@laptop')
+      expect(await ctx.sso.getIdentities(user.id)).to.have.length(2)
+    })
+
+    it('POST /sso/identities/:provider rolls back when provider.register throws', async () => {
+      ({ ctx, baseUrl } = await setup())
+      const { user } = await registerPasswordUser(ctx, 'alice', 'longenough')
+      const token = await loginAndGetToken(baseUrl, 'alice', 'longenough')
+      // password register throws when password is too short; the newly-linked
+      // identity row must not survive.
+      const identitiesBefore = await ctx.sso.getIdentities(user.id)
+      const res = await fetch(`${baseUrl}/sso/identities/password`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'alice2', password: 'short' }),
+      })
+      expect(res.status).to.equal(500)
+      expect(await ctx.sso.getIdentities(user.id)).to.have.length(identitiesBefore.length)
+    })
+
+    it('POST /sso/identities/mail refuses without a verified challenge', async () => {
+      ({ ctx, baseUrl } = await setup())
+      await registerPasswordUser(ctx, 'alice', 'longenough')
+      const token = await loginAndGetToken(baseUrl, 'alice', 'longenough')
+      // Attempting to bind a mail identity without challenge+code must fail;
+      // otherwise anyone could register arbitrary emails.
+      const res = await fetch(`${baseUrl}/sso/identities/mail`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'alice@example.com' }),
+      })
+      expect(res.status).to.equal(500)
+      expect(await ctx.database.get('sso.mail' as any, {})).to.have.length(0)
+    })
+
+    it('POST /sso/identities/mail succeeds with a valid challenge+code', async () => {
+      ({ ctx, baseUrl } = await setup())
+      const { user } = await registerPasswordUser(ctx, 'alice', 'longenough')
+      const token = await loginAndGetToken(baseUrl, 'alice', 'longenough')
+      mailbox.length = 0
+      const chRes = await fetch(`${baseUrl}/sso/challenge/mail`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'alice@example.com' }),
+      })
+      expect(chRes.status).to.equal(200)
+      const { challengeId } = await chRes.json() as any
+      const sent = mailbox.find(m => m.email === 'alice@example.com')!
+      const res = await fetch(`${baseUrl}/sso/identities/mail`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'alice@example.com', challengeId, code: sent.code }),
+      })
+      expect(res.status).to.equal(200)
+      expect(await ctx.sso.getIdentities(user.id)).to.have.length(2)
+      const [row] = await ctx.database.get('sso.mail' as any, { email: 'alice@example.com' })
+      expect(row).to.exist
     })
 
     it('DELETE /sso/identities/:id refuses to remove someone else\'s identity', async () => {

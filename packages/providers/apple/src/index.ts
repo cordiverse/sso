@@ -1,8 +1,7 @@
 import { Context, Inject } from 'cordis'
 import { createPrivateKey, createSign, randomBytes } from 'node:crypto'
 import { SsoProvider } from '@cordisjs/plugin-sso'
-import { callbackResponse, decodeJwtPayload, StateStore } from '@cordisjs/oauth-utils'
-import type { Database } from '@cordisjs/plugin-database'
+import { callbackResponse, decodeJwtPayload, handleOAuthCallback, StateStore } from '@cordisjs/oauth-utils'
 import type {} from '@cordisjs/plugin-server'
 import type {} from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-timer'
@@ -80,19 +79,57 @@ export default class AppleProvider extends SsoProvider {
       const entry = this.state.consume(state)
       if (!entry) return callbackResponse({ error: 'INVALID_STATE', status: 400 }, this.config.redirectUrl)
       const nonce = entry.payload?.nonce
-      const result = await this.resolve!({ code, state, id_token, user, nonce })
-      if (result) {
-        const identity = await ctx.sso.getIdentity(result.identityId)
-        const token = await ctx.sso.createSession(identity!.userId, identity!.id)
-        return callbackResponse({ token }, this.config.redirectUrl)
+      const linkUserId = entry.payload?.link?.userId as number | undefined
+
+      try {
+        const clientSecret = generateClientSecret(this.config)
+        const tokenRes = await fetch('https://appleid.apple.com/auth/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ client_id: this.config.clientId, client_secret: clientSecret, code, grant_type: 'authorization_code' }),
+        })
+        const tokenData = await tokenRes.json() as any
+        if (tokenData.error) {
+          return callbackResponse({ error: 'TOKEN_EXCHANGE_FAILED', status: 400 }, this.config.redirectUrl)
+        }
+        const idToken = decodeJWT(tokenData.id_token ?? id_token)
+        if (nonce && idToken.nonce !== nonce) {
+          return callbackResponse({ error: 'NONCE_MISMATCH', status: 400 }, this.config.redirectUrl)
+        }
+        const displayName = this.parseUserName(user)
+
+        const [existing] = await this.ctx.database.get('sso.apple', { sub: idToken.sub })
+        let resolveResult: { identityId: number } | null = null
+        if (existing) {
+          if (tokenData.refresh_token) {
+            await this.ctx.database.set('sso.apple', { identityId: existing.identityId }, {
+              refreshToken: tokenData.refresh_token, ...(displayName ? { displayName } : {}),
+            })
+          }
+          resolveResult = { identityId: existing.identityId }
+        }
+
+        return await handleOAuthCallback({
+          ctx,
+          providerName: 'apple',
+          autoRegister: this.autoRegister,
+          linkUserId,
+          resolveResult,
+          registerFn: async (identityId, db) => {
+            await db.create('sso.apple', {
+              identityId,
+              sub: idToken.sub,
+              email: idToken.email,
+              displayName,
+              refreshToken: tokenData.refresh_token,
+            })
+          },
+          redirectUrl: this.config.redirectUrl,
+        })
+      } catch (e) {
+        console.warn('[sso-apple]', e)
+        return callbackResponse({ error: 'OAUTH_CALLBACK_FAILED', status: 500 }, this.config.redirectUrl)
       }
-      if (this.autoRegister) {
-        const { user: ssoUser, identityId } = await ctx.sso.createUser('apple')
-        await this.register!({ identityId, code, id_token, user, nonce })
-        const token = await ctx.sso.createSession(ssoUser.id, identityId)
-        return callbackResponse({ token }, this.config.redirectUrl)
-      }
-      return callbackResponse({ error: 'ACCOUNT_NOT_FOUND', status: 401 }, this.config.redirectUrl)
     })
   }
 
@@ -103,9 +140,9 @@ export default class AppleProvider extends SsoProvider {
     } catch { return undefined }
   }
 
-  getAuthUrl(redirectUri: string, state: string) {
+  getAuthUrl(redirectUri: string, state: string, link?: { userId: number }) {
     const nonce = randomBytes(16).toString('base64url')
-    this.state.register(state, redirectUri, { nonce })
+    this.state.register(state, redirectUri, { nonce, ...(link ? { link } : {}) })
     const params = new URLSearchParams({
       client_id: this.config.clientId,
       redirect_uri: redirectUri,
@@ -119,49 +156,8 @@ export default class AppleProvider extends SsoProvider {
   }
 
   async resolve(credentials: any) {
-    const { code, id_token, user: userJson, nonce } = credentials
-    if (!code) return null
-    const clientSecret = generateClientSecret(this.config)
-    const tokenRes = await fetch('https://appleid.apple.com/auth/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ client_id: this.config.clientId, client_secret: clientSecret, code, grant_type: 'authorization_code' }),
-    })
-    const tokenData = await tokenRes.json() as any
-    if (tokenData.error) return null
-    const idToken = decodeJWT(tokenData.id_token ?? id_token)
-    if (nonce && idToken.nonce !== nonce) return null
-    const displayName = this.parseUserName(userJson)
-    const [existing] = await this.ctx.database.get('sso.apple', { sub: idToken.sub })
-    if (existing) {
-      if (tokenData.refresh_token) {
-        await this.ctx.database.set('sso.apple', { identityId: existing.identityId }, {
-          refreshToken: tokenData.refresh_token, ...(displayName ? { displayName } : {}),
-        })
-      }
-      return { identityId: existing.identityId }
-    }
+    // The Apple flow is driven by POST /sso/callback/apple above; direct
+    // POST /sso/sessions/apple is not a meaningful path.
     return null
-  }
-
-  async register(credentials: any, db: Database = this.ctx.database) {
-    const { identityId, code, id_token, user: userJson, nonce } = credentials
-    if (!identityId) throw new Error('identityId required')
-    const clientSecret = generateClientSecret(this.config)
-    const tokenRes = await fetch('https://appleid.apple.com/auth/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ client_id: this.config.clientId, client_secret: clientSecret, code, grant_type: 'authorization_code' }),
-    })
-    const tokenData = await tokenRes.json() as any
-    const idToken = decodeJWT(tokenData.id_token ?? id_token)
-    if (nonce && idToken.nonce !== nonce) throw new Error('nonce mismatch')
-    await db.create('sso.apple', {
-      identityId,
-      sub: idToken.sub,
-      email: idToken.email,
-      displayName: this.parseUserName(userJson),
-      refreshToken: tokenData.refresh_token,
-    })
   }
 }

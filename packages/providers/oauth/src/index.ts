@@ -1,6 +1,6 @@
 import { Context, Inject } from 'cordis'
 import { SsoProvider } from '@cordisjs/plugin-sso'
-import { callbackResponse, decodeJwtPayload, PkceStore, StateStore } from '@cordisjs/oauth-utils'
+import { callbackResponse, decodeJwtPayload, handleOAuthCallback, PkceStore, StateStore } from '@cordisjs/oauth-utils'
 import type { Database } from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-server'
 import type {} from '@cordisjs/plugin-database'
@@ -333,19 +333,67 @@ export default class OAuthProvider extends SsoProvider {
       const url = new URL(req.url, 'http://localhost')
       const code = url.searchParams.get('code')!
       const state = url.searchParams.get('state')!
-      const result = await this.resolve!({ code, state })
-      if (result) {
-        const identity = await ctx.sso.getIdentity(result.identityId)
-        const token = await ctx.sso.createSession(identity!.userId, identity!.id)
-        return callbackResponse({ token }, this.config.redirectUrl)
+      const entry = this.pkce ? this.pkce.consume(state) : this.state!.consume(state)
+      if (!entry) return callbackResponse({ error: 'INVALID_STATE', status: 400 }, this.config.redirectUrl)
+      const linkUserId = entry.payload?.link?.userId as number | undefined
+
+      try {
+        const tokenData = await this.exchangeToken(code, entry.redirectUri, (entry as any).codeVerifier) as any
+        if (tokenData.error) {
+          return callbackResponse({ error: 'TOKEN_EXCHANGE_FAILED', status: 400 }, this.config.redirectUrl)
+        }
+        const accessToken = tokenData.access_token ?? tokenData.data?.access_token
+        if (!accessToken) {
+          return callbackResponse({ error: 'NO_ACCESS_TOKEN', status: 400 }, this.config.redirectUrl)
+        }
+        const userInfoData = this.preset.oidc && tokenData.id_token
+          ? decodeJwtPayload(tokenData.id_token)
+          : await this.fetchUserInfo(accessToken)
+        const userInfo = this.preset.extractUser(userInfoData)
+
+        const [existing] = await this.ctx.database.get('sso.oauth', {
+          provider: this.name, externalId: userInfo.externalId,
+        })
+        let resolveResult: { identityId: number } | null = null
+        if (existing) {
+          await this.ctx.database.set('sso.oauth', { identityId: existing.identityId }, {
+            accessToken,
+            refreshToken: tokenData.refresh_token ?? existing.refreshToken,
+            displayName: userInfo.displayName,
+            email: userInfo.email,
+            avatar: userInfo.avatar,
+            scope: this.scope,
+            tokenExpiresAt: tokenData.expires_in ? new Date(Date.now() + tokenData.expires_in * 1000) : undefined,
+          })
+          resolveResult = { identityId: existing.identityId }
+        }
+
+        return await handleOAuthCallback({
+          ctx,
+          providerName: this.name,
+          autoRegister: this.autoRegister,
+          linkUserId,
+          resolveResult,
+          registerFn: async (identityId, db) => {
+            await db.create('sso.oauth', {
+              identityId,
+              provider: this.name,
+              externalId: userInfo.externalId,
+              accessToken,
+              refreshToken: tokenData.refresh_token,
+              displayName: userInfo.displayName,
+              email: userInfo.email,
+              avatar: userInfo.avatar,
+              scope: this.scope,
+              tokenExpiresAt: tokenData.expires_in ? new Date(Date.now() + tokenData.expires_in * 1000) : undefined,
+            })
+          },
+          redirectUrl: this.config.redirectUrl,
+        })
+      } catch (e) {
+        console.warn('[sso-oauth]', e)
+        return callbackResponse({ error: 'OAUTH_CALLBACK_FAILED', status: 500 }, this.config.redirectUrl)
       }
-      if (this.autoRegister) {
-        const { user, identityId } = await ctx.sso.createUser(this.name)
-        await this.register!({ identityId, code, state })
-        const token = await ctx.sso.createSession(user.id, identityId)
-        return callbackResponse({ token }, this.config.redirectUrl)
-      }
-      return callbackResponse({ error: 'ACCOUNT_NOT_FOUND', status: 401 }, this.config.redirectUrl)
     })
   }
 
@@ -392,14 +440,15 @@ export default class OAuthProvider extends SsoProvider {
     return res.json()
   }
 
-  getAuthUrl(redirectUri: string, state: string) {
+  getAuthUrl(redirectUri: string, state: string, link?: { userId: number }) {
     const extras: Record<string, string> = {}
+    const payload = link ? { link } : undefined
     if (this.pkce) {
-      const issued = this.pkce.register(state, redirectUri)
+      const issued = this.pkce.register(state, redirectUri, payload)
       extras.code_challenge = issued.codeChallenge
       extras.code_challenge_method = issued.codeChallengeMethod
     } else {
-      this.state!.register(state, redirectUri)
+      this.state!.register(state, redirectUri, payload)
     }
     const params = new URLSearchParams({
       response_type: 'code',
@@ -417,84 +466,9 @@ export default class OAuthProvider extends SsoProvider {
     return `${this.preset.authorizeUrl}?${params}`
   }
 
-  async resolve(credentials: any) {
-    const { code, state } = credentials
-    if (!code || !state) return null
-    let redirectUri: string | undefined
-    let codeVerifier: string | undefined
-    if (this.pkce) {
-      const entry = this.pkce.consume(state)
-      if (!entry) return null
-      redirectUri = entry.redirectUri
-      codeVerifier = entry.codeVerifier
-    } else {
-      const entry = this.state!.consume(state)
-      if (!entry) return null
-      redirectUri = entry.redirectUri
-    }
-    if (!redirectUri) return null
-
-    const tokenData = await this.exchangeToken(code, redirectUri, codeVerifier) as any
-    if (tokenData.error) return null
-    const accessToken = tokenData.access_token ?? tokenData.data?.access_token
-    if (!accessToken) return null
-    const userInfoData = this.preset.oidc && tokenData.id_token
-      ? decodeJwtPayload(tokenData.id_token)
-      : await this.fetchUserInfo(accessToken)
-    const userInfo = this.preset.extractUser(userInfoData)
-    const [existing] = await this.ctx.database.get('sso.oauth', {
-      provider: this.name, externalId: userInfo.externalId,
-    })
-    if (existing) {
-      await this.ctx.database.set('sso.oauth', { identityId: existing.identityId }, {
-        accessToken,
-        refreshToken: tokenData.refresh_token ?? existing.refreshToken,
-        displayName: userInfo.displayName,
-        email: userInfo.email,
-        avatar: userInfo.avatar,
-        scope: this.scope,
-        tokenExpiresAt: tokenData.expires_in ? new Date(Date.now() + tokenData.expires_in * 1000) : undefined,
-      })
-      const result: any = { identityId: existing.identityId }
-      if (this.preset.getRelated) result.related = this.preset.getRelated(userInfoData)
-      return result
-    }
-    return null
-  }
-
-  async register(credentials: any, db: Database = this.ctx.database) {
-    const { identityId, code, state } = credentials
-    if (!identityId) throw new Error('identityId required')
-    let redirectUri: string | undefined
-    let codeVerifier: string | undefined
-    if (this.pkce) {
-      const entry = this.pkce.consume(state)
-      if (!entry) throw new Error('PKCE challenge expired or unknown state')
-      redirectUri = entry.redirectUri
-      codeVerifier = entry.codeVerifier
-    } else {
-      const entry = this.state!.consume(state)
-      if (!entry) throw new Error('state expired or unknown')
-      redirectUri = entry.redirectUri
-    }
-
-    const tokenData = await this.exchangeToken(code, redirectUri, codeVerifier) as any
-    const accessToken = tokenData.access_token ?? tokenData.data?.access_token
-    const userInfoData = this.preset.oidc && tokenData.id_token
-      ? decodeJwtPayload(tokenData.id_token)
-      : await this.fetchUserInfo(accessToken)
-    const userInfo = this.preset.extractUser(userInfoData)
-    await db.create('sso.oauth', {
-      identityId,
-      provider: this.name,
-      externalId: userInfo.externalId,
-      accessToken,
-      refreshToken: tokenData.refresh_token,
-      displayName: userInfo.displayName,
-      email: userInfo.email,
-      avatar: userInfo.avatar,
-      scope: this.scope,
-      tokenExpiresAt: tokenData.expires_in ? new Date(Date.now() + tokenData.expires_in * 1000) : undefined,
-    })
-  }
+  // resolve/register are intentionally omitted: OAuth flow is fully handled
+  // by the callback endpoint above. POST /sso/sessions/:name and
+  // POST /sso/users/:name will return RESOLVE_NOT_SUPPORTED /
+  // REGISTER_NOT_SUPPORTED respectively, which accurately reflects that the
+  // OAuth dance is driven by redirects rather than direct credential POSTs.
 }

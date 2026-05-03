@@ -1,5 +1,8 @@
 import { Context } from 'cordis'
 import { createHash, randomBytes } from 'node:crypto'
+import type { Database } from '@cordisjs/plugin-database'
+import type {} from '@cordisjs/plugin-database'
+import type {} from '@cordisjs/plugin-sso'
 import type {} from '@cordisjs/plugin-timer'
 
 /**
@@ -206,4 +209,69 @@ export class StateStore {
   get size(): number {
     return this.store.size
   }
+}
+
+/**
+ * Shared callback logic for OAuth-ish providers. Handles three cases:
+ * 1. `link` intent — attach the provider credential to an existing user (session already validated when the authorize URL was issued).
+ * 2. `resolve` succeeded — existing identity, just mint a session.
+ * 3. `autoRegister` — create a new user + link + call `registerFn` atomically.
+ *
+ * Callers supply their own `resolveResult` (from a provider-specific lookup)
+ * and a `registerFn` closure that writes the provider-specific row. This
+ * helper handles the user/identity/session plumbing consistently across
+ * qq/wechat/twitter/apple/oauth.
+ */
+export async function handleOAuthCallback(options: {
+  ctx: Context
+  providerName: string
+  autoRegister: boolean
+  linkUserId?: number
+  resolveResult: { identityId: number } | null
+  registerFn: (identityId: number, db: Database) => Promise<void>
+  redirectUrl?: string
+}): Promise<Response> {
+  const { ctx, providerName, autoRegister, linkUserId, resolveResult, registerFn, redirectUrl } = options
+
+  // Link intent — attach to the logged-in user.
+  if (linkUserId) {
+    if (resolveResult) {
+      const identity = await ctx.sso.getIdentity(resolveResult.identityId)
+      if (identity?.userId !== linkUserId) {
+        // The provider account is already linked to a different user; refuse.
+        return callbackResponse({ error: 'ALREADY_LINKED', status: 409 }, redirectUrl)
+      }
+      // Same user — the credential was already theirs. Nothing new to write;
+      // mint a fresh session so the caller gets a usable token.
+      const token = await ctx.sso.createSession(identity.userId, identity.id)
+      return callbackResponse({ token }, redirectUrl)
+    }
+    const identityId = await ctx.database.transact(async (db) => {
+      const linked = await ctx.sso.link(linkUserId, providerName, db)
+      await registerFn(linked.identityId, db)
+      return linked.identityId
+    })
+    const token = await ctx.sso.createSession(linkUserId, identityId)
+    return callbackResponse({ token }, redirectUrl)
+  }
+
+  // Normal login path — identity already exists.
+  if (resolveResult) {
+    const identity = await ctx.sso.getIdentity(resolveResult.identityId)
+    const token = await ctx.sso.createSession(identity!.userId, identity!.id)
+    return callbackResponse({ token }, redirectUrl)
+  }
+
+  // Auto-register path.
+  if (autoRegister) {
+    const result = await ctx.database.transact(async (db) => {
+      const { user, identityId } = await ctx.sso.createUser(providerName, db)
+      await registerFn(identityId, db)
+      return { userId: user.id, identityId }
+    })
+    const token = await ctx.sso.createSession(result.userId, result.identityId)
+    return callbackResponse({ token }, redirectUrl)
+  }
+
+  return callbackResponse({ error: 'ACCOUNT_NOT_FOUND', status: 401 }, redirectUrl)
 }

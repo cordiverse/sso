@@ -20,10 +20,14 @@
   },
   "homepage": "https://github.com/cordiverse/sso",
   "peerDependencies": {
+    "@cordisjs/plugin-database": "^4.0.1",
+    "@cordisjs/plugin-sso": "^0.1.0",
     "@cordisjs/plugin-timer": "^1.1.1",
     "cordis": "^4.0.0-rc.4"
   },
   "devDependencies": {
+    "@cordisjs/plugin-database": "^4.0.1",
+    "@cordisjs/plugin-sso": "^0.1.0",
     "@cordisjs/plugin-timer": "^1.1.1",
     "@sinonjs/fake-timers": "^6.0.1",
     "@types/chai": "^5.2.3",

@@ -1,7 +1,6 @@
 import { Context, Inject } from 'cordis'
 import { SsoProvider } from '@cordisjs/plugin-sso'
-import { callbackResponse, PkceStore } from '@cordisjs/oauth-utils'
-import type { Database } from '@cordisjs/plugin-database'
+import { callbackResponse, handleOAuthCallback, PkceStore } from '@cordisjs/oauth-utils'
 import type {} from '@cordisjs/plugin-server'
 import type {} from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-timer'
@@ -63,25 +62,62 @@ export default class TwitterProvider extends SsoProvider {
       const url = new URL(req.url, 'http://localhost')
       const code = url.searchParams.get('code')!
       const state = url.searchParams.get('state')!
-      const result = await this.resolve!({ code, state })
-      if (result) {
-        const identity = await ctx.sso.getIdentity(result.identityId)
-        const token = await ctx.sso.createSession(identity!.userId, identity!.id)
-        return callbackResponse({ token }, this.config.redirectUrl)
+      const pkce = this.pkce.consume(state)
+      if (!pkce) return callbackResponse({ error: 'INVALID_STATE', status: 400 }, this.config.redirectUrl)
+      const linkUserId = pkce.payload?.link?.userId as number | undefined
+
+      try {
+        const tokenData = await this.exchangeToken(code, pkce.redirectUri, pkce.codeVerifier)
+        if (tokenData.error) {
+          return callbackResponse({ error: 'TOKEN_EXCHANGE_FAILED', status: 400 }, this.config.redirectUrl)
+        }
+        const { access_token, refresh_token, expires_in } = tokenData
+        const user = await this.fetchUser(access_token)
+
+        const [existing] = await this.ctx.database.get('sso.twitter', { twitterId: user.id })
+        let resolveResult: { identityId: number } | null = null
+        if (existing) {
+          await this.ctx.database.set('sso.twitter', { identityId: existing.identityId }, {
+            accessToken: access_token,
+            refreshToken: refresh_token,
+            username: user.username,
+            displayName: user.name,
+            avatar: user.profile_image_url,
+            tokenExpiresAt: expires_in ? new Date(Date.now() + expires_in * 1000) : undefined,
+          })
+          resolveResult = { identityId: existing.identityId }
+        }
+
+        return await handleOAuthCallback({
+          ctx,
+          providerName: 'twitter',
+          autoRegister: this.autoRegister,
+          linkUserId,
+          resolveResult,
+          registerFn: async (identityId, db) => {
+            await db.create('sso.twitter', {
+              identityId,
+              twitterId: user.id,
+              username: user.username,
+              accessToken: access_token,
+              refreshToken: refresh_token,
+              displayName: user.name,
+              avatar: user.profile_image_url,
+              tokenExpiresAt: expires_in ? new Date(Date.now() + expires_in * 1000) : undefined,
+            })
+          },
+          redirectUrl: this.config.redirectUrl,
+        })
+      } catch (e) {
+        console.warn('[sso-twitter]', e)
+        return callbackResponse({ error: 'OAUTH_CALLBACK_FAILED', status: 500 }, this.config.redirectUrl)
       }
-      if (this.autoRegister) {
-        const { user, identityId } = await ctx.sso.createUser('twitter')
-        await this.register!({ identityId, code, state })
-        const token = await ctx.sso.createSession(user.id, identityId)
-        return callbackResponse({ token }, this.config.redirectUrl)
-      }
-      return callbackResponse({ error: 'ACCOUNT_NOT_FOUND', status: 401 }, this.config.redirectUrl)
     })
   }
 
-  getAuthUrl(redirectUri: string, state: string) {
+  getAuthUrl(redirectUri: string, state: string, link?: { userId: number }) {
     const scope = this.config.scope ?? 'tweet.read users.read offline.access'
-    const { codeChallenge, codeChallengeMethod } = this.pkce.register(state, redirectUri)
+    const { codeChallenge, codeChallengeMethod } = this.pkce.register(state, redirectUri, link ? { link } : undefined)
     const params = new URLSearchParams({
       response_type: 'code',
       client_id: this.config.clientId,
@@ -114,49 +150,8 @@ export default class TwitterProvider extends SsoProvider {
   }
 
   async resolve(credentials: any) {
-    const { code, state } = credentials
-    if (!code || !state) return null
-    const pkce = this.pkce.consume(state)
-    if (!pkce) return null
-
-    const tokenData = await this.exchangeToken(code, pkce.redirectUri, pkce.codeVerifier)
-    if (tokenData.error) return null
-    const { access_token, refresh_token, expires_in } = tokenData
-    const user = await this.fetchUser(access_token)
-
-    const [existing] = await this.ctx.database.get('sso.twitter', { twitterId: user.id })
-    if (existing) {
-      await this.ctx.database.set('sso.twitter', { identityId: existing.identityId }, {
-        accessToken: access_token,
-        refreshToken: refresh_token,
-        username: user.username,
-        displayName: user.name,
-        avatar: user.profile_image_url,
-        tokenExpiresAt: expires_in ? new Date(Date.now() + expires_in * 1000) : undefined,
-      })
-      return { identityId: existing.identityId }
-    }
+    // Driven entirely by the /sso/callback/twitter handler above; direct
+    // POST /sso/sessions/twitter is not a meaningful flow.
     return null
-  }
-
-  async register(credentials: any, db: Database = this.ctx.database) {
-    const { identityId, code, state } = credentials
-    if (!identityId) throw new Error('identityId required')
-    const pkce = this.pkce.consume(state)
-    if (!pkce) throw new Error('PKCE challenge expired')
-
-    const tokenData = await this.exchangeToken(code, pkce.redirectUri, pkce.codeVerifier)
-    const user = await this.fetchUser(tokenData.access_token)
-
-    await db.create('sso.twitter', {
-      identityId,
-      twitterId: user.id,
-      username: user.username,
-      accessToken: tokenData.access_token,
-      refreshToken: tokenData.refresh_token,
-      displayName: user.name,
-      avatar: user.profile_image_url,
-      tokenExpiresAt: tokenData.expires_in ? new Date(Date.now() + tokenData.expires_in * 1000) : undefined,
-    })
   }
 }

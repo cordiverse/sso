@@ -59,14 +59,24 @@ export function apply(ctx: Context) {
     return Response.json(user)
   })
 
-  // Get OAuth authorization URL
+  // Get OAuth authorization URL. When `intent=link` is passed the caller
+  // must supply a valid session; the logged-in userId is baked into the
+  // OAuth state so the callback handler can attach the credential to the
+  // existing user instead of creating a new one.
   ctx.server.get('/sso/oauth-url/:provider', async (req) => {
     const provider = ctx.sso.getProvider(req.params.provider)
     if (!provider?.getAuthUrl) return errorResponse(400, 'OAUTH_NOT_SUPPORTED')
     const url = new URL(req.url, 'http://localhost')
     const redirectUri = url.searchParams.get('redirect_uri') ?? ''
     const state = url.searchParams.get('state') ?? ''
-    const authUrl = provider.getAuthUrl(redirectUri, state)
+    let link: { userId: number } | undefined
+    if (url.searchParams.get('intent') === 'link') {
+      const token = extractToken(req)
+      const user = await requireSession(ctx.sso, token)
+      if (!user) return errorResponse(401, 'SESSION_REQUIRED')
+      link = { userId: user.id }
+    }
+    const authUrl = provider.getAuthUrl(redirectUri, state, link)
     return Response.json({ url: authUrl })
   })
 
@@ -104,17 +114,29 @@ export function apply(ctx: Context) {
     return Response.json(await ctx.sso.getIdentities(user.id))
   })
 
-  // Link a new provider to current user (requires session)
+  // Link a new provider to current user (requires session). If the body
+  // carries credentials, provider.register is invoked in the same transaction
+  // so the identity row and the provider-specific row are either both
+  // persisted or both rolled back. Providers whose register is driven by an
+  // OAuth callback (qq/wechat/twitter/apple/oauth) don't take a body here;
+  // for them the identity row is a placeholder until the callback runs.
   ctx.server.post('/sso/identities/:provider', async (req) => {
     const token = extractToken(req)
     const user = await requireSession(ctx.sso, token)
     if (!user) return errorResponse(401, 'SESSION_REQUIRED')
     const provider = ctx.sso.getProvider(req.params.provider)
     if (!provider) return errorResponse(404, 'PROVIDER_NOT_FOUND')
-    const { identityId } = await ctx.database.transact(async (db) => {
-      return ctx.sso.link(user.id, req.params.provider, db)
+    const body = await safeJson(req)
+    const hasCredentials = body && Object.keys(body).length > 0
+    const result = await ctx.database.transact(async (db) => {
+      const { identityId } = await ctx.sso.link(user.id, req.params.provider, db)
+      if (hasCredentials && provider.register) {
+        const reg = await provider.register({ ...body, identityId }, db)
+        return { identityId, data: reg?.data }
+      }
+      return { identityId }
     })
-    return Response.json({ identityId })
+    return Response.json(result.data ? result : { identityId: result.identityId })
   })
 
   // Unlink an identity (requires session)

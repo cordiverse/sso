@@ -11,7 +11,6 @@ import {
 } from '@simplewebauthn/server'
 import { SsoProvider } from '@cordisjs/plugin-sso'
 import type { Database } from '@cordisjs/plugin-database'
-import type {} from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-timer'
 
 declare module '@cordisjs/plugin-database' {
@@ -150,9 +149,18 @@ export default class WebAuthnProvider extends SsoProvider {
         })
         if (!verification.verified || !verification.registrationInfo) return false
         const { credential, credentialDeviceType, credentialBackedUp } = verification.registrationInfo
-        const { identityId, deviceName } = body
-        if (identityId) {
-          await this.ctx.database.create('sso.webauthn', {
+        const { deviceName } = body
+        // Tie the new credential to the user whose id was captured in the
+        // pending challenge. link() + create run in the same transaction so a
+        // post-attestation DB failure cannot leave an orphan sso.identity.
+        // SECURITY CAVEAT: the challenge endpoint doesn't authenticate, so a
+        // caller can challenge for any userId. Until /sso/challenge/webauthn
+        // is wrapped with a session check, treat webauthn binding as trusting
+        // the caller to be the session holder of `pending.userId`.
+        if (!pending.userId) return false
+        await this.ctx.database.transact(async (db) => {
+          const { identityId } = await this.ctx.sso.link(pending.userId!, 'webauthn', db)
+          await db.create('sso.webauthn', {
             identityId,
             credentialId: credential.id,
             publicKey: Buffer.from(credential.publicKey).toString('base64'),
@@ -163,7 +171,7 @@ export default class WebAuthnProvider extends SsoProvider {
             transports: body.response?.transports ? JSON.stringify(body.response.transports) : undefined,
             createdAt: new Date(),
           })
-        }
+        })
         return true
       } catch { return false }
     }

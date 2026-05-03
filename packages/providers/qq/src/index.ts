@@ -1,6 +1,6 @@
 import { Context, Inject } from 'cordis'
 import { SsoProvider } from '@cordisjs/plugin-sso'
-import { callbackResponse, StateStore } from '@cordisjs/oauth-utils'
+import { callbackResponse, handleOAuthCallback, StateStore } from '@cordisjs/oauth-utils'
 import type { Database } from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-server'
 import type {} from '@cordisjs/plugin-database'
@@ -70,20 +70,53 @@ export default class QqProvider extends SsoProvider {
       const state = url.searchParams.get('state')!
       const entry = this.state.consume(state)
       if (!entry) return callbackResponse({ error: 'INVALID_STATE', status: 400 }, this.config.redirectUrl)
+      const linkUserId = entry.payload?.link?.userId as number | undefined
       const redirect_uri = entry.redirectUri
-      const result = await this.resolve!({ code, redirect_uri })
-      if (result) {
-        const identity = await ctx.sso.getIdentity(result.identityId)
-        const token = await ctx.sso.createSession(identity!.userId, identity!.id)
-        return callbackResponse({ token }, this.config.redirectUrl)
+
+      try {
+        const tokenData = await this.getAccessToken(code, redirect_uri)
+        const { access_token, refresh_token, expires_in } = tokenData
+        const meData = await this.getOpenId(access_token)
+        const userInfo = await this.getUserInfo(access_token, meData.openid)
+
+        const [existing] = await this.ctx.database.get('sso.qq', { openId: meData.openid })
+        let resolveResult: { identityId: number } | null = null
+        if (existing) {
+          await this.ctx.database.set('sso.qq', { identityId: existing.identityId }, {
+            accessToken: access_token,
+            refreshToken: refresh_token,
+            unionId: meData.unionid,
+            displayName: userInfo.nickname,
+            avatar: userInfo.figureurl_qq_2 ?? userInfo.figureurl_qq_1,
+            tokenExpiresAt: expires_in ? new Date(Date.now() + +expires_in * 1000) : undefined,
+          })
+          resolveResult = { identityId: existing.identityId }
+        }
+
+        return await handleOAuthCallback({
+          ctx,
+          providerName: 'qq',
+          autoRegister: this.autoRegister,
+          linkUserId,
+          resolveResult,
+          registerFn: async (identityId, db) => {
+            await db.create('sso.qq', {
+              identityId,
+              openId: meData.openid,
+              unionId: meData.unionid,
+              accessToken: access_token,
+              refreshToken: refresh_token,
+              displayName: userInfo.nickname,
+              avatar: userInfo.figureurl_qq_2 ?? userInfo.figureurl_qq_1,
+              tokenExpiresAt: expires_in ? new Date(Date.now() + +expires_in * 1000) : undefined,
+            })
+          },
+          redirectUrl: this.config.redirectUrl,
+        })
+      } catch (e) {
+        console.warn('[sso-qq]', e)
+        return callbackResponse({ error: 'OAUTH_CALLBACK_FAILED', status: 500 }, this.config.redirectUrl)
       }
-      if (this.autoRegister) {
-        const { user, identityId } = await ctx.sso.createUser('qq')
-        await this.register!({ identityId, code, redirect_uri })
-        const token = await ctx.sso.createSession(user.id, identityId)
-        return callbackResponse({ token }, this.config.redirectUrl)
-      }
-      return callbackResponse({ error: 'ACCOUNT_NOT_FOUND', status: 401 }, this.config.redirectUrl)
     })
   }
 
@@ -117,8 +150,8 @@ export default class QqProvider extends SsoProvider {
     return res.json() as Promise<any>
   }
 
-  getAuthUrl(redirectUri: string, state: string) {
-    this.state.register(state, redirectUri)
+  getAuthUrl(redirectUri: string, state: string, link?: { userId: number }) {
+    this.state.register(state, redirectUri, link ? { link } : undefined)
     const params = new URLSearchParams({
       response_type: 'code',
       client_id: this.config.appId,
@@ -130,42 +163,8 @@ export default class QqProvider extends SsoProvider {
   }
 
   async resolve(credentials: any) {
-    const { code, redirect_uri } = credentials
-    if (!code) return null
-    const tokenData = await this.getAccessToken(code, redirect_uri)
-    const { access_token, refresh_token, expires_in } = tokenData
-    const meData = await this.getOpenId(access_token)
-    const userInfo = await this.getUserInfo(access_token, meData.openid)
-    const [existing] = await this.ctx.database.get('sso.qq', { openId: meData.openid })
-    if (existing) {
-      await this.ctx.database.set('sso.qq', { identityId: existing.identityId }, {
-        accessToken: access_token,
-        refreshToken: refresh_token,
-        unionId: meData.unionid,
-        displayName: userInfo.nickname,
-        avatar: userInfo.figureurl_qq_2 ?? userInfo.figureurl_qq_1,
-        tokenExpiresAt: expires_in ? new Date(Date.now() + +expires_in * 1000) : undefined,
-      })
-      return { identityId: existing.identityId }
-    }
+    // The QQ flow is driven by GET /sso/callback/qq above; direct
+    // POST /sso/sessions/qq is not a meaningful path.
     return null
-  }
-
-  async register(credentials: any, db: Database = this.ctx.database) {
-    const { identityId, code, redirect_uri } = credentials
-    if (!identityId) throw new Error('identityId required')
-    const tokenData = await this.getAccessToken(code, redirect_uri)
-    const meData = await this.getOpenId(tokenData.access_token)
-    const userInfo = await this.getUserInfo(tokenData.access_token, meData.openid)
-    await db.create('sso.qq', {
-      identityId,
-      openId: meData.openid,
-      unionId: meData.unionid,
-      accessToken: tokenData.access_token,
-      refreshToken: tokenData.refresh_token,
-      displayName: userInfo.nickname,
-      avatar: userInfo.figureurl_qq_2 ?? userInfo.figureurl_qq_1,
-      tokenExpiresAt: tokenData.expires_in ? new Date(Date.now() + +tokenData.expires_in * 1000) : undefined,
-    })
   }
 }

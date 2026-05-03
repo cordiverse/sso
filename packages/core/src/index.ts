@@ -38,7 +38,7 @@ export abstract class SsoProvider {
 
   resolve?(credentials: any): Promise<{ identityId: number; data?: any } | null>
   register?(credentials: any, db?: Database): Promise<{ data?: any } | void>
-  getAuthUrl?(redirectUri: string, state: string): string
+  getAuthUrl?(redirectUri: string, state: string, link?: { userId: number }): string
   challenge?(target: any): Promise<{ challengeId: string }>
   verify?(challengeId: string, response: string): Promise<boolean>
 }

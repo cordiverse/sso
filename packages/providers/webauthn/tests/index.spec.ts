@@ -39,27 +39,6 @@ describe('@cordisjs/plugin-sso-webauthn', () => {
 
     it('completes a registration with a virtual authenticator', async () => {
       const provider = ctx.sso.getProvider('webauthn')!
-      const { user, identityId } = await ctx.sso.createUser('webauthn')
-
-      const { challengeId, data: options } = await provider.challenge!({
-        type: 'register',
-        userId: user.id,
-      }) as any
-
-      const attestation = emulator.createJSON(ORIGIN, options)
-      const ok = await provider.verify!(challengeId, JSON.stringify({ ...attestation, identityId }))
-      expect(ok).to.equal(true)
-
-      const rows = await ctx.database.get('sso.webauthn' as any, { identityId })
-      expect(rows).to.have.length(1)
-      const [row] = rows
-      expect(row.credentialId).to.equal(attestation.id)
-      expect(row.signCount).to.be.a('number')
-      expect(row.publicKey).to.be.a('string').and.match(/^[A-Za-z0-9+/=]+$/)
-    })
-
-    it('returns true but writes nothing when identityId is omitted', async () => {
-      const provider = ctx.sso.getProvider('webauthn')!
       const { user } = await ctx.sso.createUser('webauthn')
 
       const { challengeId, data: options } = await provider.challenge!({
@@ -72,7 +51,28 @@ describe('@cordisjs/plugin-sso-webauthn', () => {
       expect(ok).to.equal(true)
 
       const rows = await ctx.database.get('sso.webauthn' as any, {})
-      expect(rows).to.have.length(0)
+      expect(rows).to.have.length(1)
+      const [row] = rows
+      expect(row.credentialId).to.equal(attestation.id)
+      expect(row.signCount).to.be.a('number')
+      expect(row.publicKey).to.be.a('string').and.match(/^[A-Za-z0-9+/=]+$/)
+      // verify() linked a fresh identity owned by the challenge's userId.
+      const identity = await ctx.sso.getIdentity(row.identityId)
+      expect(identity?.userId).to.equal(user.id)
+      expect(identity?.provider).to.equal('webauthn')
+    })
+
+    it('rejects a register verify when the challenge lacked userId', async () => {
+      const provider = ctx.sso.getProvider('webauthn')!
+
+      const { challengeId, data: options } = await provider.challenge!({
+        type: 'register',
+      }) as any
+
+      const attestation = emulator.createJSON(ORIGIN, options)
+      const ok = await provider.verify!(challengeId, JSON.stringify(attestation))
+      expect(ok).to.equal(false)
+      expect(await ctx.database.get('sso.webauthn' as any, {})).to.have.length(0)
     })
   })
 
@@ -90,15 +90,17 @@ describe('@cordisjs/plugin-sso-webauthn', () => {
       const provider = ctx.sso.getProvider('webauthn')!
       const created = await ctx.sso.createUser('webauthn')
       userId = created.user.id
-      identityId = created.identityId
 
       const { challengeId, data: options } = await provider.challenge!({
         type: 'register',
         userId,
       }) as any
       const attestation = emulator.createJSON(ORIGIN, options)
-      await provider.verify!(challengeId, JSON.stringify({ ...attestation, identityId }))
+      await provider.verify!(challengeId, JSON.stringify(attestation))
       credentialId = attestation.id
+      // verify() linked a new identity — capture its id for later assertions.
+      const [row] = await ctx.database.get('sso.webauthn' as any, { credentialId })
+      identityId = row.identityId
     })
 
     it('verifies a real assertion and bumps signCount + lastUsedAt', async () => {
@@ -148,7 +150,7 @@ describe('@cordisjs/plugin-sso-webauthn', () => {
         const ctx2 = await setup({ timeout: 1000 })
         const emu2 = new WebAuthnEmulator()
         const provider = ctx2.sso.getProvider('webauthn')!
-        const { user, identityId } = await ctx2.sso.createUser('webauthn')
+        const { user } = await ctx2.sso.createUser('webauthn')
 
         const { challengeId, data: options } = await provider.challenge!({
           type: 'register',
@@ -157,7 +159,7 @@ describe('@cordisjs/plugin-sso-webauthn', () => {
 
         clock.tick(2000)
         const attestation = emu2.createJSON(ORIGIN, options)
-        const ok = await provider.verify!(challengeId, JSON.stringify({ ...attestation, identityId }))
+        const ok = await provider.verify!(challengeId, JSON.stringify(attestation))
         expect(ok).to.equal(false)
       } finally {
         clock.uninstall()
