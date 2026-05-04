@@ -61,7 +61,7 @@ export abstract class SsoProvider {
 
   canBePrimary = true
   canStepUp = false
-  autoRegister = false
+  jitProvisioning = false
   interactive = true
 
   constructor(public ctx: Context) {}
@@ -93,7 +93,7 @@ export abstract class CredentialsProvider<Creds = any> extends SsoProvider {
         const token = await this.ctx.sso.createSession(identity.userId, identity.id)
         return { phase: 'finish', token, userId: identity.userId, identityId: identity.id, created: false }
       }
-      if (!this.autoRegister) throw ssoError(401, 'ACCOUNT_NOT_FOUND')
+      if (!this.jitProvisioning) throw ssoError(401, 'ACCOUNT_NOT_FOUND')
       return this.doRegister(input)
     }
 
@@ -188,7 +188,7 @@ export abstract class ChallengeProvider<Init = any, Complete = any, Extra = unkn
         const token = await this.ctx.sso.createSession(identity.userId, identity.id)
         return { phase: 'finish', token, userId: identity.userId, identityId: identity.id, created: false }
       }
-      if (!this.autoRegister) throw ssoError(401, 'ACCOUNT_NOT_FOUND')
+      if (!this.jitProvisioning) throw ssoError(401, 'ACCOUNT_NOT_FOUND')
       return this.ctx.database.transact(async (db) => {
         const { user, identityId } = await this.ctx.sso.createUser(this.name, db)
         await this.writeIdentity(user.id, identityId, pending, db)
@@ -318,7 +318,7 @@ export namespace Sso {
     category: Category
     canBePrimary: boolean
     canStepUp: boolean
-    autoRegister: boolean
+    jitProvisioning: boolean
     interactive: boolean
   }
 
@@ -395,7 +395,7 @@ export class Sso extends Service {
       category: p.category,
       canBePrimary: p.canBePrimary,
       canStepUp: p.canStepUp,
-      autoRegister: p.autoRegister,
+      jitProvisioning: p.jitProvisioning,
       interactive: p.interactive,
     }))
     return this.ctx.waterfall('sso/provider-meta', base, () => base)

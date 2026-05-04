@@ -23,7 +23,7 @@ export interface SsoSms {
 export interface Config {
   codeExpiry?: number
   codeLength?: number
-  autoRegister?: boolean
+  jitProvisioning?: boolean
   template?: string
 }
 
@@ -44,7 +44,7 @@ export default class SmsProvider extends ChallengeProvider<SmsInit, SmsComplete,
   name = 'sms'
   canBePrimary = true
   canStepUp = true
-  autoRegister: boolean
+  jitProvisioning: boolean
   interactive = true
 
   private codeLength: number
@@ -54,7 +54,7 @@ export default class SmsProvider extends ChallengeProvider<SmsInit, SmsComplete,
     super(ctx)
     this.challengeTtl = config.codeExpiry ?? 5 * 60 * 1000
     this.codeLength = config.codeLength ?? 6
-    this.autoRegister = config.autoRegister ?? true
+    this.jitProvisioning = config.jitProvisioning ?? true
     this.template = config.template ?? 'Your verification code is {code}'
 
     ctx.database.extend('sso.sms', {

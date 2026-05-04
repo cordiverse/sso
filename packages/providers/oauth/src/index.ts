@@ -253,7 +253,7 @@ export default class OAuthProvider extends RedirectProvider {
   name: string
   canBePrimary = true
   canStepUp = false
-  autoRegister = true
+  jitProvisioning = true
   interactive = true
 
   private preset: OAuthPreset
@@ -362,7 +362,7 @@ export default class OAuthProvider extends RedirectProvider {
         return await handleOAuthCallback({
           ctx,
           providerName: this.name,
-          autoRegister: this.autoRegister,
+          jitProvisioning: this.jitProvisioning,
           linkUserId,
           resolveResult,
           display: userInfo.displayName,

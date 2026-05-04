@@ -215,7 +215,7 @@ export class StateStore {
  * Shared callback logic for OAuth-ish providers. Handles three cases:
  * 1. `link` intent — attach the provider credential to an existing user (session already validated when the authorize URL was issued).
  * 2. `resolve` succeeded — existing identity, just mint a session.
- * 3. `autoRegister` — create a new user + link + call `registerFn` atomically.
+ * 3. `jitProvisioning` — create a new user + link + call `registerFn` atomically.
  *
  * Callers supply their own `resolveResult` (from a provider-specific lookup)
  * and a `registerFn` closure that writes the provider-specific row. This
@@ -225,7 +225,7 @@ export class StateStore {
 export async function handleOAuthCallback(options: {
   ctx: Context
   providerName: string
-  autoRegister: boolean
+  jitProvisioning: boolean
   linkUserId?: number
   resolveResult: { identityId: number } | null
   registerFn: (identityId: number, db: Database) => Promise<void>
@@ -236,7 +236,7 @@ export async function handleOAuthCallback(options: {
   display?: string
   redirectUrl?: string
 }): Promise<Response> {
-  const { ctx, providerName, autoRegister, linkUserId, resolveResult, registerFn, display, redirectUrl } = options
+  const { ctx, providerName, jitProvisioning, linkUserId, resolveResult, registerFn, display, redirectUrl } = options
 
   // Link intent — attach to the logged-in user.
   if (linkUserId) {
@@ -274,7 +274,7 @@ export async function handleOAuthCallback(options: {
   }
 
   // Auto-register path.
-  if (autoRegister) {
+  if (jitProvisioning) {
     const result = await ctx.database.transact(async (db) => {
       const { user, identityId } = await ctx.sso.createUser(providerName, db, { display })
       await registerFn(identityId, db)

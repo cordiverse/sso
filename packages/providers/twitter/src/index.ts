@@ -35,7 +35,7 @@ export default class TwitterProvider extends RedirectProvider {
   name = 'twitter'
   canBePrimary = true
   canStepUp = false
-  autoRegister = true
+  jitProvisioning = true
   interactive = true
 
   private pkce: PkceStore
@@ -93,7 +93,7 @@ export default class TwitterProvider extends RedirectProvider {
         return await handleOAuthCallback({
           ctx,
           providerName: 'twitter',
-          autoRegister: this.autoRegister,
+          jitProvisioning: this.jitProvisioning,
           linkUserId,
           resolveResult,
           display: user.name || user.username,

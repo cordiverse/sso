@@ -23,7 +23,7 @@ export interface Config {
   send: (email: string, code: string) => Promise<void>
   codeExpiry?: number
   codeLength?: number
-  autoRegister?: boolean
+  jitProvisioning?: boolean
 }
 
 interface MailInit {
@@ -43,7 +43,7 @@ export default class MailProvider extends ChallengeProvider<MailInit, MailComple
   name = 'mail'
   canBePrimary = true
   canStepUp = true
-  autoRegister: boolean
+  jitProvisioning: boolean
   interactive = true
 
   private codeLength: number
@@ -53,7 +53,7 @@ export default class MailProvider extends ChallengeProvider<MailInit, MailComple
     super(ctx)
     this.challengeTtl = config.codeExpiry ?? 5 * 60 * 1000
     this.codeLength = config.codeLength ?? 6
-    this.autoRegister = config.autoRegister ?? true
+    this.jitProvisioning = config.jitProvisioning ?? true
     this.send = config.send
 
     ctx.database.extend('sso.mail', {

@@ -17,14 +17,14 @@ function sleep(ms = 0) {
 
 class AutoRegProvider extends CredentialsProvider<any> {
   name = 'auto-reg'
-  autoRegister = true
+  jitProvisioning = true
   async resolve() { return null }
   async writeIdentity() { /* no-op — base class still links/creates user */ }
 }
 
 class OAuthFakeProvider extends RedirectProvider {
   name = 'oauth-fake'
-  autoRegister = true
+  jitProvisioning = true
   lastLinkUserId: number | undefined
   getAuthUrl(redirectUri: string, state: string, link?: { userId: number }) {
     this.lastLinkUserId = link?.userId
@@ -97,7 +97,7 @@ describe('@cordisjs/plugin-sso-server', () => {
       const names = body.map(p => p.name).sort()
       expect(names).to.deep.equal(['mail', 'password', 'totp'])
       const password = body.find(p => p.name === 'password')
-      expect(password).to.include({ category: 'credentials', canBePrimary: true, canStepUp: false, autoRegister: false })
+      expect(password).to.include({ category: 'credentials', canBePrimary: true, canStepUp: false, jitProvisioning: false })
       const mail = body.find(p => p.name === 'mail')
       expect(mail).to.include({ category: 'challenge', canStepUp: true })
       const totp = body.find(p => p.name === 'totp')
@@ -191,7 +191,7 @@ describe('@cordisjs/plugin-sso-server', () => {
       expect(validated).to.exist
     })
 
-    it('login wrong password → ACCOUNT_NOT_FOUND (autoRegister=false)', async () => {
+    it('login wrong password → ACCOUNT_NOT_FOUND (jitProvisioning=false)', async () => {
       ({ ctx, baseUrl } = await setup())
       await registerPasswordUser(baseUrl, 'alice', 'longenough')
       const res = await fetch(`${baseUrl}/sso/sessions/password`, {
@@ -203,7 +203,7 @@ describe('@cordisjs/plugin-sso-server', () => {
       expect(await res.json()).to.deep.equal({ error: 'ACCOUNT_NOT_FOUND' })
     })
 
-    it('autoRegister=true provider falls through to register on login miss', async () => {
+    it('jitProvisioning=true provider falls through to register on login miss', async () => {
       ({ ctx, baseUrl } = await setup())
       await ctx.plugin(AutoRegProvider)
       await sleep()
@@ -217,7 +217,7 @@ describe('@cordisjs/plugin-sso-server', () => {
   })
 
   describe('POST /sso/sessions/mail (challenge → finish)', () => {
-    it('unknown email autoRegisters in one flow', async () => {
+    it('unknown email jitProvisionings in one flow', async () => {
       ({ ctx, baseUrl } = await setup())
       mailbox.length = 0
       const step1 = await fetch(`${baseUrl}/sso/sessions/mail`, {

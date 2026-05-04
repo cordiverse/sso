@@ -33,7 +33,7 @@ export default class PasswordProvider extends CredentialsProvider<PasswordCreds>
   name = 'password'
   canBePrimary = true
   canStepUp = false
-  autoRegister = false
+  jitProvisioning = false
   interactive = true
 
   minLength: number

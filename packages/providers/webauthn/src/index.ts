@@ -82,7 +82,7 @@ export default class WebAuthnProvider extends ChallengeProvider<WebauthnInit, We
   name = 'webauthn'
   canBePrimary = true
   canStepUp = true
-  autoRegister = false
+  jitProvisioning = false
   interactive = true
 
   protected consumeOnFailure = true

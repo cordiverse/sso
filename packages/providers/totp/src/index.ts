@@ -94,7 +94,7 @@ export default class TotpProvider extends ChallengeProvider<TotpInit, TotpComple
   name = 'totp'
   canBePrimary = false
   canStepUp = true
-  autoRegister = false
+  jitProvisioning = false
   interactive = false
 
   private issuer: string

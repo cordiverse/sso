@@ -36,7 +36,7 @@ export default class WeChatProvider extends RedirectProvider {
   name = 'wechat'
   canBePrimary = true
   canStepUp = false
-  autoRegister = true
+  jitProvisioning = true
   interactive = true
 
   private state: StateStore
@@ -94,7 +94,7 @@ export default class WeChatProvider extends RedirectProvider {
         return await handleOAuthCallback({
           ctx,
           providerName: 'wechat',
-          autoRegister: this.autoRegister,
+          jitProvisioning: this.jitProvisioning,
           linkUserId,
           resolveResult,
           display: userInfo.nickname,

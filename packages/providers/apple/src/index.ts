@@ -52,7 +52,7 @@ export default class AppleProvider extends RedirectProvider {
   name = 'apple'
   canBePrimary = true
   canStepUp = false
-  autoRegister = true
+  jitProvisioning = true
   interactive = true
 
   private state: StateStore
@@ -114,7 +114,7 @@ export default class AppleProvider extends RedirectProvider {
         return await handleOAuthCallback({
           ctx,
           providerName: 'apple',
-          autoRegister: this.autoRegister,
+          jitProvisioning: this.jitProvisioning,
           linkUserId,
           resolveResult,
           display: displayName,

@@ -101,7 +101,7 @@ describe('@cordisjs/plugin-sso-password', () => {
       expect((result as any).token).to.be.a('string')
     })
 
-    it('autoRegister=false → ACCOUNT_NOT_FOUND on unknown username', async () => {
+    it('jitProvisioning=false → ACCOUNT_NOT_FOUND on unknown username', async () => {
       const provider = ctx.sso.getProvider('password')!
       let err: any
       try {

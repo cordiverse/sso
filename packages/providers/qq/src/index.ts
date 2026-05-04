@@ -41,7 +41,7 @@ export default class QqProvider extends RedirectProvider {
   name = 'qq'
   canBePrimary = true
   canStepUp = false
-  autoRegister = true
+  jitProvisioning = true
   interactive = true
 
   private state: StateStore
@@ -98,7 +98,7 @@ export default class QqProvider extends RedirectProvider {
         return await handleOAuthCallback({
           ctx,
           providerName: 'qq',
-          autoRegister: this.autoRegister,
+          jitProvisioning: this.jitProvisioning,
           linkUserId,
           resolveResult,
           display: userInfo.nickname,
