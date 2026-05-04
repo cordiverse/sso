@@ -105,23 +105,22 @@ describe('@cordisjs/plugin-sso-totp', () => {
       return data!.secret as string
     }
 
-    it('verify accepts a correct code, flips verified, and resolve then succeeds', async () => {
+    it('verify accepts a correct code and flips verified=true', async () => {
       const { identityId } = await ctx.sso.createUser('totp')
       const secret = await registerFor(identityId)
       const code = totp(base32Decode(secret), Math.floor(T0 / 1000), 30, 6, 'sha1')
       const provider = ctx.sso.getProvider('totp')!
 
-      // resolve refuses before verify (verified === false)
-      expect(await provider.resolve!({ identityId, code })).to.be.null
+      // TOTP does not expose resolve — it is not a primary login factor. The
+      // only way to prove the code is provider.verify(), which doubles as
+      // the activation step for register and as the future 2FA step-up path.
+      expect(provider.resolve).to.equal(undefined)
 
       const ok = await provider.verify!(String(identityId), code)
       expect(ok).to.equal(true)
 
       const [row] = await ctx.database.get('sso.totp' as any, { identityId })
       expect(row.verified).to.equal(true)
-
-      const resolved = await provider.resolve!({ identityId, code })
-      expect(resolved).to.deep.equal({ identityId })
     })
 
     it('verify rejects an incorrect code', async () => {

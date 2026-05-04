@@ -202,13 +202,12 @@ export default class WebAuthnProvider extends SsoProvider {
     } catch { return false }
   }
 
-  async resolve(credentials: any) {
-    const { credentialId } = credentials
-    if (!credentialId) return null
-    const [record] = await this.ctx.database.get('sso.webauthn', { credentialId })
-    if (!record) return null
-    return { identityId: record.identityId }
-  }
+  // resolve is intentionally not implemented. The old version looked up
+  // sso.webauthn by credentialId alone without verifying the signed challenge,
+  // which would have let anyone who knows a credential id get a session for
+  // its owner. Passwordless login MUST go through a challenge → verify pair
+  // (the authenticate branch of verify() below does proper signature checks)
+  // — see the TODO section in the sso CLAUDE.md.
 
   async register(credentials: any, db: Database = this.ctx.database) {
     const { identityId, credentialId, publicKey, signCount, deviceType, backedUp, transports, deviceName } = credentials

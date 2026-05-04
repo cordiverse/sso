@@ -107,19 +107,12 @@ export default class TotpProvider extends SsoProvider {
     })
   }
 
-  async resolve(credentials: any) {
-    const { identityId, code } = credentials
-    if (!identityId || !code) return null
-    const [record] = await this.ctx.database.get('sso.totp', { identityId })
-    if (!record || !record.verified) return null
-    const secret = base32Decode(record.secret)
-    const now = Math.floor(Date.now() / 1000)
-    for (let i = -this.window; i <= this.window; i++) {
-      const expected = generateTOTP(secret, now + i * this.period, this.period, this.digits, this.algorithm)
-      if (expected === code) return { identityId }
-    }
-    return null
-  }
+  // resolve is intentionally not implemented. TOTP is a second factor, not a
+  // primary credential — exposing it through POST /sso/sessions/totp would
+  // let anyone with an identityId + a 6-digit guess get a session. The
+  // step-up flow (login with primary provider → prompt for totp code →
+  // /sso/sessions/stepup/totp) will use `verify()` instead. See the TODO
+  // section in the sso CLAUDE.md for the planned shape.
 
   async register(credentials: any, db: Database = this.ctx.database) {
     const { identityId, label } = credentials

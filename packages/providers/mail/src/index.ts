@@ -82,28 +82,42 @@ export default class MailProvider extends SsoProvider {
     return { challengeId }
   }
 
-  // Consume a challenge: returns true iff (challengeId, code) match and the
-  // stored email matches. One-shot — a successful call deletes the challenge
-  // so the same code can't be reused.
-  private consumeChallenge(email: string, challengeId: string, code: string): boolean {
+  // Split verification from consumption so login (resolve) and register can
+  // share one challenge: resolve peeks, and only whichever of
+  // { resolve-hit, register } actually succeeds consumes. This keeps the
+  // autoRegister fallback path working — previously resolve consumed the
+  // challenge, then register's second consume failed and the whole session
+  // request threw 500.
+  private peekChallenge(email: string, challengeId: string, code: string): boolean {
     const challenge = this.challenges.get(challengeId)
     if (!challenge) return false
-    try {
-      if (Date.now() > challenge.expiresAt) return false
-      if (challenge.email !== email) return false
-      if (challenge.code !== code) return false
-      return true
-    } finally {
+    if (Date.now() > challenge.expiresAt) return false
+    if (challenge.email !== email) return false
+    if (challenge.code !== code) return false
+    return true
+  }
+
+  private consumeChallenge(email: string, challengeId: string, code: string): boolean {
+    if (!this.peekChallenge(email, challengeId, code)) {
+      // Still delete on pure-mismatch hits so an expired/mismatched challenge
+      // doesn't linger past its usefulness.
       this.challenges.delete(challengeId)
+      return false
     }
+    this.challenges.delete(challengeId)
+    return true
   }
 
   async resolve(credentials: any) {
     const { email, challengeId, code } = credentials
     if (!email || !challengeId || !code) return null
-    if (!this.consumeChallenge(email, challengeId, code)) return null
+    if (!this.peekChallenge(email, challengeId, code)) return null
     const [record] = await this.ctx.database.get('sso.mail', { email })
     if (!record) return null
+    // Match found — consume the challenge on our way out. If no match, the
+    // server will fall through to autoRegister (if enabled); register will
+    // consume then.
+    this.consumeChallenge(email, challengeId, code)
     return { identityId: record.identityId }
   }
 

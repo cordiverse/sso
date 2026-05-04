@@ -85,7 +85,31 @@ export default class SmsProvider extends SsoProvider {
     return { challengeId }
   }
 
+  // Peek/consume split — same rationale as the mail provider. resolve peeks so
+  // the same challenge survives for an autoRegister fallback.
+  private peekChallenge(phone: string, challengeId: string, code: string): boolean {
+    const challenge = this.challenges.get(challengeId)
+    if (!challenge) return false
+    if (Date.now() > challenge.expiresAt) return false
+    if (challenge.phone !== phone) return false
+    if (challenge.code !== code) return false
+    return true
+  }
+
+  private consumeChallenge(phone: string, challengeId: string, code: string): boolean {
+    if (!this.peekChallenge(phone, challengeId, code)) {
+      this.challenges.delete(challengeId)
+      return false
+    }
+    this.challenges.delete(challengeId)
+    return true
+  }
+
   async verify(challengeId: string, response: string) {
+    // Kept for the generic /sso/verify/sms endpoint. Validates code only —
+    // callers that already know the phone should prefer the resolve/register
+    // flow which cross-checks phone ↔ challenge and is atomic with identity
+    // writes.
     const challenge = this.challenges.get(challengeId)
     if (!challenge) return false
     if (Date.now() > challenge.expiresAt) {
@@ -98,17 +122,23 @@ export default class SmsProvider extends SsoProvider {
   }
 
   async resolve(credentials: any) {
-    const { phone } = credentials
-    if (!phone) return null
+    const { phone, challengeId, code } = credentials
+    if (!phone || !challengeId || !code) return null
+    if (!this.peekChallenge(phone, challengeId, code)) return null
     const [record] = await this.ctx.database.get('sso.sms', { phone })
     if (!record) return null
+    this.consumeChallenge(phone, challengeId, code)
     return { identityId: record.identityId }
   }
 
   async register(credentials: any, db: Database = this.ctx.database) {
-    const { identityId, phone } = credentials
+    const { identityId, phone, challengeId, code } = credentials
     if (!identityId) throw new Error('identityId required')
     if (!phone) throw new Error('phone required')
+    if (!challengeId || !code) throw new Error('challengeId and code required')
+    if (!this.consumeChallenge(phone, challengeId, code)) {
+      throw new Error('verification failed')
+    }
     const [existing] = await db.get('sso.sms', { phone })
     if (existing) throw new Error('phone already registered')
     await db.create('sso.sms', { identityId, phone, verified: true })

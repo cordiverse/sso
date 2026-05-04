@@ -251,6 +251,92 @@ describe('@cordisjs/plugin-sso-server', () => {
     })
   })
 
+  describe('mail autoRegister via POST /sso/sessions', () => {
+    // Regression: the old resolve consumed the challenge eagerly, which broke
+    // the autoRegister fallback because register's second consume failed.
+    // Now resolve peeks; consume is split between the matching path (resolve
+    // hit) and the fallback path (register).
+
+    it('falls through to register when the email is unknown', async () => {
+      ({ ctx, baseUrl } = await setup())
+      mailbox.length = 0
+      const chRes = await fetch(`${baseUrl}/sso/challenge/mail`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'fresh@example.com' }),
+      })
+      const { challengeId } = await chRes.json() as any
+      const sent = mailbox[0]
+
+      const res = await fetch(`${baseUrl}/sso/sessions/mail`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'fresh@example.com', challengeId, code: sent.code }),
+      })
+      expect(res.status).to.equal(200)
+      const { token, userId } = await res.json() as any
+      expect(token).to.be.a('string')
+      expect(userId).to.be.a('number')
+      expect(await ctx.database.get('sso.mail' as any, { email: 'fresh@example.com' })).to.have.length(1)
+    })
+
+    it('logs in an existing mail user without invoking register', async () => {
+      ({ ctx, baseUrl } = await setup())
+      // Register via POST /sso/users/mail first.
+      mailbox.length = 0
+      const ch1 = await fetch(`${baseUrl}/sso/challenge/mail`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'back@example.com' }),
+      })
+      const { challengeId: cid1 } = await ch1.json() as any
+      const reg = await fetch(`${baseUrl}/sso/users/mail`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'back@example.com', challengeId: cid1, code: mailbox[0].code }),
+      })
+      expect(reg.status).to.equal(200)
+      const usersBefore = (await ctx.database.get('sso.user', {})).length
+
+      // Now log in with a fresh challenge.
+      mailbox.length = 0
+      const ch2 = await fetch(`${baseUrl}/sso/challenge/mail`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'back@example.com' }),
+      })
+      const { challengeId: cid2 } = await ch2.json() as any
+      const login = await fetch(`${baseUrl}/sso/sessions/mail`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'back@example.com', challengeId: cid2, code: mailbox[0].code }),
+      })
+      expect(login.status).to.equal(200)
+      expect((await ctx.database.get('sso.user', {})).length).to.equal(usersBefore)
+    })
+
+    it('rejects a replayed challenge', async () => {
+      ({ ctx, baseUrl } = await setup())
+      mailbox.length = 0
+      const chRes = await fetch(`${baseUrl}/sso/challenge/mail`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'once@example.com' }),
+      })
+      const { challengeId } = await chRes.json() as any
+      const code = mailbox[0].code
+      const body = JSON.stringify({ email: 'once@example.com', challengeId, code })
+
+      const first = await fetch(`${baseUrl}/sso/sessions/mail`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body,
+      })
+      expect(first.status).to.equal(200)
+
+      const second = await fetch(`${baseUrl}/sso/sessions/mail`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body,
+      })
+      // Exact code is an implementation detail — register throws which the
+      // server catches as 500; ideally this would become a typed 401. Either
+      // way, it must NOT issue a second session.
+      expect(second.status).to.be.oneOf([401, 500])
+    })
+  })
+
   describe('GET /sso/oauth-url/:provider', () => {
     it('returns 400 OAUTH_NOT_SUPPORTED for providers without getAuthUrl', async () => {
       ({ ctx, baseUrl } = await setup())

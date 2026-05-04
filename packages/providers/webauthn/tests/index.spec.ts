@@ -117,15 +117,9 @@ describe('@cordisjs/plugin-sso-webauthn', () => {
       expect(after.lastUsedAt).to.be.instanceOf(Date)
     })
 
-    it('resolve returns identityId for a known credentialId', async () => {
+    it('does not expose resolve (passwordless login must go through challenge+verify)', async () => {
       const provider = ctx.sso.getProvider('webauthn')!
-      expect(await provider.resolve!({ credentialId })).to.deep.equal({ identityId })
-    })
-
-    it('resolve returns null for an unknown credentialId', async () => {
-      const provider = ctx.sso.getProvider('webauthn')!
-      expect(await provider.resolve!({ credentialId: 'no-such-id' })).to.be.null
-      expect(await provider.resolve!({})).to.be.null
+      expect(provider.resolve).to.equal(undefined)
     })
   })
 
