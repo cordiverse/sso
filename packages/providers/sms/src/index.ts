@@ -39,6 +39,7 @@ interface PendingChallenge {
 @Inject('timer')
 export default class SmsProvider extends SsoProvider {
   name = 'sms'
+  type = 'challenge' as const
   interactive = true
   autoRegister: boolean
 

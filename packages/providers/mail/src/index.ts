@@ -37,6 +37,7 @@ interface PendingChallenge {
 @Inject('timer')
 export default class MailProvider extends SsoProvider {
   name = 'mail'
+  type = 'challenge' as const
   interactive = true
   autoRegister: boolean
 

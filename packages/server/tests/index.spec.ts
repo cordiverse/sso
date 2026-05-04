@@ -18,12 +18,14 @@ function sleep(ms = 0) {
 
 class NoResolveProvider extends SsoProvider {
   name = 'no-resolve'
+  type = 'credentials' as const
   interactive = true
   autoRegister = false
 }
 
 class AutoRegProvider extends SsoProvider {
   name = 'auto-reg'
+  type = 'credentials' as const
   interactive = true
   autoRegister = true
   async resolve() { return null }
@@ -32,6 +34,7 @@ class AutoRegProvider extends SsoProvider {
 
 class OAuthFakeProvider extends SsoProvider {
   name = 'oauth-fake'
+  type = 'redirect' as const
   interactive = true
   autoRegister = true
   lastLinkUserId: number | undefined
@@ -101,8 +104,10 @@ describe('@cordisjs/plugin-sso-server', () => {
       const names = body.map(p => p.name).sort()
       expect(names).to.deep.equal(['mail', 'password', 'totp'])
       expect(body.find(p => p.name === 'password')).to.include({
-        interactive: true, autoRegister: false,
+        type: 'credentials', interactive: true, autoRegister: false,
       })
+      expect(body.find(p => p.name === 'mail')).to.include({ type: 'challenge' })
+      expect(body.find(p => p.name === 'totp')).to.include({ type: 'totp' })
     })
 
     it('reflects waterfall augmentation from listeners', async () => {

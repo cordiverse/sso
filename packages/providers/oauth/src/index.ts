@@ -262,6 +262,7 @@ export default class OAuthProvider extends SsoProvider {
   static reusable = true
 
   name: string
+  type = 'redirect' as const
   interactive = true
   autoRegister = true
 

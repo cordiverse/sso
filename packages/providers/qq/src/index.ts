@@ -39,6 +39,7 @@ function parseCallback(text: string): any {
 @Inject('timer')
 export default class QqProvider extends SsoProvider {
   name = 'qq'
+  type = 'redirect' as const
   interactive = true
   autoRegister = true
 

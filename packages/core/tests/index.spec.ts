@@ -19,6 +19,7 @@ async function setup(config: Sso.Config = {}) {
 
 class FakeProvider extends SsoProvider {
   name: string
+  type = 'credentials' as const
   interactive: boolean
   autoRegister: boolean
   constructor(ctx: Context, config: { name: string; interactive?: boolean; autoRegister?: boolean }) {
@@ -206,8 +207,8 @@ describe('@cordisjs/plugin-sso', () => {
       const metas = await ctx.sso.getProviderMetas()
       expect(metas).to.have.length(2)
       const byName = Object.fromEntries(metas.map(m => [m.name, m]))
-      expect(byName.a).to.deep.equal({ name: 'a', interactive: true, autoRegister: false })
-      expect(byName.b).to.deep.equal({ name: 'b', interactive: false, autoRegister: true })
+      expect(byName.a).to.deep.equal({ name: 'a', type: 'credentials', interactive: true, autoRegister: false })
+      expect(byName.b).to.deep.equal({ name: 'b', type: 'credentials', interactive: false, autoRegister: true })
     })
 
     it('listeners can augment via next()', async () => {

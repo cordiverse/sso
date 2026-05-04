@@ -42,6 +42,7 @@ export interface Config {
 @Inject('timer')
 export default class WebAuthnProvider extends SsoProvider {
   name = 'webauthn'
+  type = 'webauthn' as const
   interactive = false
   autoRegister = false
 

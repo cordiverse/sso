@@ -26,6 +26,7 @@ declare module '@cordisjs/plugin-database' {
 @Inject('database')
 export abstract class SsoProvider {
   abstract name: string
+  abstract type: Sso.ProviderType
   abstract interactive: boolean
   abstract autoRegister: boolean
 
@@ -75,8 +76,35 @@ export namespace Sso {
     request?: any
   }
 
+  // Provider protocol shape — determines the client-side flow. Deliberately
+  // NOT indexed by provider name; adding a new provider should only require
+  // picking the right `type`, never editing client-side name tables.
+  //
+  // - 'credentials' — single POST with {…credentials}. password.
+  // - 'challenge'   — two-step: POST /sso/challenge/:provider to get a
+  //                   challengeId + a code delivered out-of-band (email/sms),
+  //                   then POST /sso/sessions (or /users or /identities)
+  //                   with {…credentials, challengeId, code}.
+  // - 'redirect'    — browser redirect to a third-party IdP, callback-driven.
+  //                   oauth / qq / wechat / twitter / apple.
+  // - 'totp'        — bind: POST /sso/identities returns {data: {otpauthUrl}}
+  //                   for QR rendering, then POST /sso/verify flips verified.
+  //                   Login goes through future 2FA step-up, not a primary
+  //                   session endpoint.
+  // - 'webauthn'    — bind: POST /sso/challenge returns navigator-options,
+  //                   browser ceremony signs, POST /sso/verify writes the
+  //                   credential. Login path is the same challenge/finish
+  //                   shape (TODO).
+  export type ProviderType =
+    | 'credentials'
+    | 'challenge'
+    | 'redirect'
+    | 'totp'
+    | 'webauthn'
+
   export interface ProviderMeta {
     name: string
+    type: ProviderType
     interactive: boolean
     autoRegister: boolean
   }
@@ -142,6 +170,7 @@ export class Sso extends Service {
   async getProviderMetas(): Promise<Sso.ProviderMeta[]> {
     const base: Sso.ProviderMeta[] = this.getProviders().map((p) => ({
       name: p.name,
+      type: p.type,
       interactive: p.interactive,
       autoRegister: p.autoRegister,
     }))

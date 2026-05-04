@@ -34,6 +34,7 @@ export interface Config {
 @Inject('timer')
 export default class WeChatProvider extends SsoProvider {
   name = 'wechat'
+  type = 'redirect' as const
   interactive = true
   autoRegister = true
 

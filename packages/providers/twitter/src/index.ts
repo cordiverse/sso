@@ -33,6 +33,7 @@ export interface Config {
 @Inject('timer')
 export default class TwitterProvider extends SsoProvider {
   name = 'twitter'
+  type = 'redirect' as const
   interactive = true
   autoRegister = true
 

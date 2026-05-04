@@ -79,6 +79,7 @@ function generateTOTP(secret: Buffer, time: number, period: number, digits: numb
 
 export default class TotpProvider extends SsoProvider {
   name = 'totp'
+  type = 'totp' as const
   interactive = false
   autoRegister = false
 

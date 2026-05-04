@@ -28,6 +28,7 @@ function hashPassword(password: string, salt: string, algorithm = 'sha256'): str
 
 export default class PasswordProvider extends SsoProvider {
   name = 'password'
+  type = 'credentials' as const
   interactive = true
   autoRegister = false
 

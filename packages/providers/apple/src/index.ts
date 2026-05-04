@@ -50,6 +50,7 @@ function decodeJWT(token: string): any {
 @Inject('timer')
 export default class AppleProvider extends SsoProvider {
   name = 'apple'
+  type = 'redirect' as const
   interactive = true
   autoRegister = true
 
