@@ -86,4 +86,8 @@ export default class PasswordProvider extends SsoProvider {
       salt,
     })
   }
+
+  async unlink(identityId: number, db: Database = this.ctx.database) {
+    await db.remove('sso.password', { identityId })
+  }
 }

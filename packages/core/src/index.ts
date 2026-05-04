@@ -38,6 +38,12 @@ export abstract class SsoProvider {
 
   resolve?(credentials: any): Promise<{ identityId: number; data?: any } | null>
   register?(credentials: any, db?: Database): Promise<{ data?: any } | void>
+  // Called by Sso.unlink() before the sso.identity row is deleted. Each
+  // provider is responsible for cleaning up its own sso.<name> table so the
+  // foreign key constraint doesn't block the identity delete. Called inside
+  // the same transaction as the identity+session cleanup, so throwing here
+  // rolls back the whole unlink.
+  unlink?(identityId: number, db?: Database): Promise<void>
   getAuthUrl?(redirectUri: string, state: string, link?: { userId: number }): string
   challenge?(target: any): Promise<{ challengeId: string }>
   verify?(challengeId: string, response: string): Promise<boolean>
@@ -222,8 +228,16 @@ export class Sso extends Service {
       throw new Error('cannot remove the last identity')
     }
 
-    await this.ctx.database.remove('sso.identity', { id: identityId })
-    await this.ctx.database.set('sso.user', { id: identity.userId }, { updatedAt: new Date() })
+    const provider = this._providers.get(identity.provider)
+    await this.ctx.database.transact(async (db) => {
+      // Provider clears its own sso.<name> row (FK points here).
+      await provider?.unlink?.(identityId, db)
+      // Kill any sessions anchored to this identity — anyone logged in with
+      // this specific identity will get 401 on their next request.
+      await db.remove('sso.session', { identityId })
+      await db.remove('sso.identity', { id: identityId })
+      await db.set('sso.user', { id: identity.userId }, { updatedAt: new Date() })
+    })
   }
 
   async getIdentities(userId: number): Promise<Identity[]> {

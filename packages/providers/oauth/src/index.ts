@@ -472,4 +472,8 @@ export default class OAuthProvider extends SsoProvider {
   // POST /sso/users/:name will return RESOLVE_NOT_SUPPORTED /
   // REGISTER_NOT_SUPPORTED respectively, which accurately reflects that the
   // OAuth dance is driven by redirects rather than direct credential POSTs.
+
+  async unlink(identityId: number, db: Database = this.ctx.database) {
+    await db.remove('sso.oauth', { identityId })
+  }
 }

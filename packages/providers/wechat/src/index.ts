@@ -1,6 +1,7 @@
 import { Context, Inject } from 'cordis'
 import { SsoProvider } from '@cordisjs/plugin-sso'
 import { callbackResponse, handleOAuthCallback, StateStore } from '@cordisjs/oauth-utils'
+import type { Database } from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-server'
 import type {} from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-timer'
@@ -151,5 +152,9 @@ export default class WeChatProvider extends SsoProvider {
     // The WeChat flow is driven by GET /sso/callback/wechat above; direct
     // POST /sso/sessions/wechat is not a meaningful path.
     return null
+  }
+
+  async unlink(identityId: number, db: Database = this.ctx.database) {
+    await db.remove('sso.wechat', { identityId })
   }
 }

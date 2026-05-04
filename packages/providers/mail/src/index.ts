@@ -134,4 +134,8 @@ export default class MailProvider extends SsoProvider {
     if (existing) throw new Error('email already registered')
     await db.create('sso.mail', { identityId, email, verified: true })
   }
+
+  async unlink(identityId: number, db: Database = this.ctx.database) {
+    await db.remove('sso.mail', { identityId })
+  }
 }

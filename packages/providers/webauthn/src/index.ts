@@ -283,6 +283,10 @@ export default class WebAuthnProvider extends SsoProvider {
       createdAt: new Date(),
     })
   }
+
+  async unlink(identityId: number, db: Database = this.ctx.database) {
+    await db.remove('sso.webauthn', { identityId })
+  }
 }
 
 interface PendingChallenge {

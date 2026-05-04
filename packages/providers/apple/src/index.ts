@@ -2,8 +2,8 @@ import { Context, Inject } from 'cordis'
 import { createPrivateKey, createSign, randomBytes } from 'node:crypto'
 import { SsoProvider } from '@cordisjs/plugin-sso'
 import { callbackResponse, decodeJwtPayload, handleOAuthCallback, StateStore } from '@cordisjs/oauth-utils'
+import type { Database } from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-server'
-import type {} from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-timer'
 
 declare module '@cordisjs/plugin-database' {
@@ -160,5 +160,9 @@ export default class AppleProvider extends SsoProvider {
     // The Apple flow is driven by POST /sso/callback/apple above; direct
     // POST /sso/sessions/apple is not a meaningful path.
     return null
+  }
+
+  async unlink(identityId: number, db: Database = this.ctx.database) {
+    await db.remove('sso.apple', { identityId })
   }
 }

@@ -168,4 +168,8 @@ export default class QqProvider extends SsoProvider {
     // POST /sso/sessions/qq is not a meaningful path.
     return null
   }
+
+  async unlink(identityId: number, db: Database = this.ctx.database) {
+    await db.remove('sso.qq', { identityId })
+  }
 }

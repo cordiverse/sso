@@ -144,4 +144,8 @@ export default class SmsProvider extends SsoProvider {
     if (existing) throw new Error('phone already registered')
     await db.create('sso.sms', { identityId, phone, verified: true })
   }
+
+  async unlink(identityId: number, db: Database = this.ctx.database) {
+    await db.remove('sso.sms', { identityId })
+  }
 }

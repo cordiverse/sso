@@ -1,8 +1,8 @@
 import { Context, Inject } from 'cordis'
 import { SsoProvider } from '@cordisjs/plugin-sso'
 import { callbackResponse, handleOAuthCallback, PkceStore } from '@cordisjs/oauth-utils'
+import type { Database } from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-server'
-import type {} from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-timer'
 
 declare module '@cordisjs/plugin-database' {
@@ -154,5 +154,9 @@ export default class TwitterProvider extends SsoProvider {
     // Driven entirely by the /sso/callback/twitter handler above; direct
     // POST /sso/sessions/twitter is not a meaningful flow.
     return null
+  }
+
+  async unlink(identityId: number, db: Database = this.ctx.database) {
+    await db.remove('sso.twitter', { identityId })
   }
 }

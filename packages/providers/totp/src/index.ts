@@ -143,4 +143,8 @@ export default class TotpProvider extends SsoProvider {
     }
     return false
   }
+
+  async unlink(identityId: number, db: Database = this.ctx.database) {
+    await db.remove('sso.totp', { identityId })
+  }
 }
