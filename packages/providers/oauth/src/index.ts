@@ -1,5 +1,5 @@
 import { Context, Inject } from 'cordis'
-import { SsoProvider } from '@cordisjs/plugin-sso'
+import { RedirectProvider, Sso } from '@cordisjs/plugin-sso'
 import { callbackResponse, decodeJwtPayload, handleOAuthCallback, PkceStore, StateStore } from '@cordisjs/oauth-utils'
 import type { Database } from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-server'
@@ -34,18 +34,7 @@ export interface OAuthPreset {
   authorizeParams?: Record<string, string>
   tokenParams?: Record<string, string>
   tokenTransport?: 'header' | 'query'
-  /**
-   * PKCE method. Default `'S256'`. Set to `false` for providers that don't
-   * support PKCE (e.g. weibo's pre-OAuth-2.1 implementation).
-   */
   pkce?: 'S256' | 'plain' | false
-  /**
-   * If true, the token response carries an `id_token` (OIDC) and we can
-   * extract user info from it instead of making a second HTTP call to
-   * `userInfoUrl`. The `id_token` is decoded but NOT signature-verified —
-   * we trust the issuer because the token came directly over TLS from the
-   * known token endpoint.
-   */
   oidc?: boolean
   extractUser(data: any): {
     externalId: string
@@ -258,13 +247,14 @@ const builtinPresets: Record<string, OAuthPreset> = {
 
 @Inject('server')
 @Inject('timer')
-export default class OAuthProvider extends SsoProvider {
+export default class OAuthProvider extends RedirectProvider {
   static reusable = true
 
   name: string
-  type = 'redirect' as const
-  interactive = true
+  canBePrimary = true
+  canStepUp = false
   autoRegister = true
+  interactive = true
 
   private preset: OAuthPreset
   private scope: string
@@ -442,7 +432,7 @@ export default class OAuthProvider extends SsoProvider {
     return res.json()
   }
 
-  getAuthUrl(redirectUri: string, state: string, link?: { userId: number }) {
+  getAuthUrl(redirectUri: string, state: string, link: { userId: number } | undefined, _ctx: Sso.StepContext) {
     const extras: Record<string, string> = {}
     const payload = link ? { link } : undefined
     if (this.pkce) {
@@ -467,12 +457,6 @@ export default class OAuthProvider extends SsoProvider {
     }
     return `${this.preset.authorizeUrl}?${params}`
   }
-
-  // resolve/register are intentionally omitted: OAuth flow is fully handled
-  // by the callback endpoint above. POST /sso/sessions/:name and
-  // POST /sso/users/:name will return RESOLVE_NOT_SUPPORTED /
-  // REGISTER_NOT_SUPPORTED respectively, which accurately reflects that the
-  // OAuth dance is driven by redirects rather than direct credential POSTs.
 
   async unlink(identityId: number, db: Database = this.ctx.database) {
     await db.remove('sso.oauth', { identityId })

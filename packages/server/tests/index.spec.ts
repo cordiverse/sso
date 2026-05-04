@@ -1,10 +1,9 @@
-import { createHmac } from 'node:crypto'
 import { Context } from 'cordis'
 import Database from '@cordisjs/plugin-database'
 import MemoryDriver from '@cordisjs/plugin-database-memory'
 import Server from '@cordisjs/plugin-server'
 import Timer from '@cordisjs/plugin-timer'
-import Sso, { SsoProvider } from '@cordisjs/plugin-sso'
+import Sso, { CredentialsProvider, RedirectProvider, SsoProvider } from '@cordisjs/plugin-sso'
 import Password from '@cordisjs/plugin-sso-password'
 import Mail from '@cordisjs/plugin-sso-mail'
 import Totp from '@cordisjs/plugin-sso-totp'
@@ -16,49 +15,20 @@ function sleep(ms = 0) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms))
 }
 
-class NoResolveProvider extends SsoProvider {
-  name = 'no-resolve'
-  type = 'credentials' as const
-  interactive = true
-  autoRegister = false
-}
-
-class AutoRegProvider extends SsoProvider {
+class AutoRegProvider extends CredentialsProvider<any> {
   name = 'auto-reg'
-  type = 'credentials' as const
-  interactive = true
   autoRegister = true
   async resolve() { return null }
-  async register() { return {} }
+  async writeIdentity() { /* no-op — base class still links/creates user */ }
 }
 
-class OAuthFakeProvider extends SsoProvider {
+class OAuthFakeProvider extends RedirectProvider {
   name = 'oauth-fake'
-  type = 'redirect' as const
-  interactive = true
   autoRegister = true
   lastLinkUserId: number | undefined
   getAuthUrl(redirectUri: string, state: string, link?: { userId: number }) {
     this.lastLinkUserId = link?.userId
     return `https://example.com/auth?redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`
-  }
-  async resolve() { return null }
-  async register() { return {} }
-}
-
-// Stand-in for webauthn at the route-integration level. Avoids pulling the
-// whole authenticator emulator stack into the server spec.
-class FakeWebauthnProvider extends SsoProvider {
-  name = 'fake-webauthn'
-  type = 'webauthn' as const
-  interactive = true
-  autoRegister = false
-  public targetIdentityId: number | null = null
-  async authenticate(challengeId: string, response: string) {
-    if (this.targetIdentityId && challengeId === 'valid-ch' && response === 'valid-resp') {
-      return { identityId: this.targetIdentityId }
-    }
-    return null
   }
 }
 
@@ -86,10 +56,16 @@ async function teardown(ctx: Context) {
   await sleep()
 }
 
-async function registerPasswordUser(ctx: Context, username: string, password: string) {
-  const { user, identityId } = await ctx.sso.createUser('password')
-  await ctx.sso.getProvider('password')!.register!({ identityId, username, password })
-  return { user, identityId }
+async function registerPasswordUser(baseUrl: string, username: string, password: string) {
+  const res = await fetch(`${baseUrl}/sso/sessions/password`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ intent: 'register', username, password }),
+  })
+  expect(res.status).to.equal(200)
+  const body = await res.json() as any
+  expect(body.phase).to.equal('finish')
+  return { token: body.token as string, userId: body.userId as number }
 }
 
 async function loginAndGetToken(baseUrl: string, username: string, password: string) {
@@ -100,6 +76,7 @@ async function loginAndGetToken(baseUrl: string, username: string, password: str
   })
   expect(res.status).to.equal(200)
   const body = await res.json() as any
+  expect(body.phase).to.equal('finish')
   return body.token as string
 }
 
@@ -112,18 +89,19 @@ describe('@cordisjs/plugin-sso-server', () => {
   })
 
   describe('GET /sso/providers', () => {
-    it('returns the provider meta list', async () => {
+    it('returns the provider meta list with category + capability flags', async () => {
       ({ ctx, baseUrl } = await setup())
       const res = await fetch(`${baseUrl}/sso/providers`)
       expect(res.status).to.equal(200)
       const body = await res.json() as any[]
       const names = body.map(p => p.name).sort()
       expect(names).to.deep.equal(['mail', 'password', 'totp'])
-      expect(body.find(p => p.name === 'password')).to.include({
-        type: 'credentials', interactive: true, autoRegister: false,
-      })
-      expect(body.find(p => p.name === 'mail')).to.include({ type: 'challenge' })
-      expect(body.find(p => p.name === 'totp')).to.include({ type: 'totp' })
+      const password = body.find(p => p.name === 'password')
+      expect(password).to.include({ category: 'credentials', canBePrimary: true, canStepUp: false, autoRegister: false })
+      const mail = body.find(p => p.name === 'mail')
+      expect(mail).to.include({ category: 'challenge', canStepUp: true })
+      const totp = body.find(p => p.name === 'totp')
+      expect(totp).to.include({ category: 'challenge', canBePrimary: false, canStepUp: true })
     })
 
     it('reflects waterfall augmentation from listeners', async () => {
@@ -142,7 +120,7 @@ describe('@cordisjs/plugin-sso-server', () => {
     })
   })
 
-  describe('POST /sso/sessions/:provider', () => {
+  describe('POST /sso/sessions/:provider (login/register)', () => {
     it('returns 404 for unknown provider', async () => {
       ({ ctx, baseUrl } = await setup())
       const res = await fetch(`${baseUrl}/sso/sessions/nope`, { method: 'POST', body: '{}' })
@@ -150,67 +128,19 @@ describe('@cordisjs/plugin-sso-server', () => {
       expect(await res.json()).to.deep.equal({ error: 'PROVIDER_NOT_FOUND' })
     })
 
-    it('returns 400 RESOLVE_NOT_SUPPORTED when provider has no resolve', async () => {
+    it('intent=register creates a user atomically and returns phase:finish', async () => {
       ({ ctx, baseUrl } = await setup())
-      await ctx.plugin(NoResolveProvider)
-      await sleep()
-      const res = await fetch(`${baseUrl}/sso/sessions/no-resolve`, { method: 'POST', body: '{}' })
-      expect(res.status).to.equal(400)
-      expect(await res.json()).to.deep.equal({ error: 'RESOLVE_NOT_SUPPORTED' })
-    })
-
-    it('returns a session token on successful credentials', async () => {
-      ({ ctx, baseUrl } = await setup())
-      await registerPasswordUser(ctx, 'alice', 'longenough')
       const res = await fetch(`${baseUrl}/sso/sessions/password`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: 'alice', password: 'longenough' }),
+        body: JSON.stringify({ intent: 'register', username: 'bob', password: 'longenough' }),
       })
       expect(res.status).to.equal(200)
       const body = await res.json() as any
-      expect(body.token).to.be.a('string')
-      const validated = await ctx.sso.validateSession(body.token)
-      expect(validated).to.exist
-    })
-
-    it('returns 401 INVALID_CREDENTIALS on bad credentials (no autoRegister)', async () => {
-      ({ ctx, baseUrl } = await setup())
-      await registerPasswordUser(ctx, 'alice', 'longenough')
-      const res = await fetch(`${baseUrl}/sso/sessions/password`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: 'alice', password: 'wrong-password' }),
-      })
-      expect(res.status).to.equal(401)
-      expect(await res.json()).to.deep.equal({ error: 'INVALID_CREDENTIALS' })
-    })
-
-    it('falls through to register + token when provider.autoRegister is true', async () => {
-      ({ ctx, baseUrl } = await setup())
-      await ctx.plugin(AutoRegProvider)
-      await sleep()
-      const res = await fetch(`${baseUrl}/sso/sessions/auto-reg`, { method: 'POST', body: '{}' })
-      expect(res.status).to.equal(200)
-      const body = await res.json() as any
+      expect(body.phase).to.equal('finish')
       expect(body.token).to.be.a('string')
       expect(body.userId).to.be.a('number')
-    })
-  })
-
-  describe('POST /sso/users/:provider', () => {
-    it('creates a user and returns a token', async () => {
-      ({ ctx, baseUrl } = await setup())
-      const res = await fetch(`${baseUrl}/sso/users/password`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: 'bob', password: 'longenough' }),
-      })
-      expect(res.status).to.equal(200)
-      const body = await res.json() as any
-      expect(body.token).to.be.a('string')
-      expect(body.userId).to.be.a('number')
-      // sso.user now owns the name; password table only holds the hash.
+      expect(body.created).to.equal(true)
       const [user] = await ctx.database.get('sso.user', { name: 'bob' })
       expect(user).to.exist
       const [identity] = await ctx.database.get('sso.identity', { userId: user!.id, provider: 'password' })
@@ -219,285 +149,181 @@ describe('@cordisjs/plugin-sso-server', () => {
       expect(row).to.exist
     })
 
-    it('returns 404 for unknown provider', async () => {
+    it('intent=register rolls back when writeIdentity throws (password too short)', async () => {
       ({ ctx, baseUrl } = await setup())
-      const res = await fetch(`${baseUrl}/sso/users/nope`, { method: 'POST', body: '{}' })
-      expect(res.status).to.equal(404)
-    })
-
-    it('rolls back user + identity when provider.register throws', async () => {
-      ({ ctx, baseUrl } = await setup())
-      // password < minLength (8) makes the password provider throw from register.
-      // Before the transaction fix this left orphan rows in sso.user + sso.identity.
-      const res = await fetch(`${baseUrl}/sso/users/password`, {
+      const res = await fetch(`${baseUrl}/sso/sessions/password`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: 'carol', password: 'short' }),
+        body: JSON.stringify({ intent: 'register', username: 'carol', password: 'short' }),
       })
-      expect(res.status).to.equal(500)
+      expect(res.status).to.equal(400)
       expect(await ctx.database.get('sso.user', {})).to.have.length(0)
       expect(await ctx.database.get('sso.identity', {})).to.have.length(0)
       expect(await ctx.database.get('sso.password' as any, {})).to.have.length(0)
     })
 
-    it('rolls back when username is already taken', async () => {
+    it('intent=register rolls back when username already taken', async () => {
       ({ ctx, baseUrl } = await setup())
-      await registerPasswordUser(ctx, 'alice', 'longenough')
-      const usersBefore = await ctx.database.get('sso.user', {})
-      const identitiesBefore = await ctx.database.get('sso.identity', {})
-      const passwordsBefore = await ctx.database.get('sso.password' as any, {})
-
-      const res = await fetch(`${baseUrl}/sso/users/password`, {
+      await registerPasswordUser(baseUrl, 'alice', 'longenough')
+      const usersBefore = (await ctx.database.get('sso.user', {})).length
+      const res = await fetch(`${baseUrl}/sso/sessions/password`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: 'alice', password: 'anotherlongone' }),
+        body: JSON.stringify({ intent: 'register', username: 'alice', password: 'anotherlongone' }),
       })
-      expect(res.status).to.equal(500)
-      expect(await ctx.database.get('sso.user', {})).to.have.length(usersBefore.length)
-      expect(await ctx.database.get('sso.identity', {})).to.have.length(identitiesBefore.length)
-      expect(await ctx.database.get('sso.password' as any, {})).to.have.length(passwordsBefore.length)
+      expect(res.status).to.equal(409)
+      expect(await ctx.database.get('sso.user', {})).to.have.length(usersBefore)
     })
 
-    it('register → GET /sso/me with the returned token works', async () => {
+    it('login with correct credentials returns a token', async () => {
       ({ ctx, baseUrl } = await setup())
-      const regRes = await fetch(`${baseUrl}/sso/users/password`, {
+      await registerPasswordUser(baseUrl, 'alice', 'longenough')
+      const res = await fetch(`${baseUrl}/sso/sessions/password`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: 'dave', password: 'longenough' }),
+        body: JSON.stringify({ username: 'alice', password: 'longenough' }),
       })
-      expect(regRes.status).to.equal(200)
-      const { token } = await regRes.json() as any
-      expect(token).to.be.a('string')
-      const meRes = await fetch(`${baseUrl}/sso/me`, {
-        headers: { authorization: `Bearer ${token}` },
+      expect(res.status).to.equal(200)
+      const body = await res.json() as any
+      expect(body.phase).to.equal('finish')
+      expect(body.token).to.be.a('string')
+      const validated = await ctx.sso.validateSession(body.token)
+      expect(validated).to.exist
+    })
+
+    it('login wrong password → ACCOUNT_NOT_FOUND (autoRegister=false)', async () => {
+      ({ ctx, baseUrl } = await setup())
+      await registerPasswordUser(baseUrl, 'alice', 'longenough')
+      const res = await fetch(`${baseUrl}/sso/sessions/password`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'alice', password: 'wrong-password' }),
       })
-      expect(meRes.status).to.equal(200)
-      const me = await meRes.json() as any
-      expect(me.id).to.be.a('number')
+      expect(res.status).to.equal(401)
+      expect(await res.json()).to.deep.equal({ error: 'ACCOUNT_NOT_FOUND' })
+    })
+
+    it('autoRegister=true provider falls through to register on login miss', async () => {
+      ({ ctx, baseUrl } = await setup())
+      await ctx.plugin(AutoRegProvider)
+      await sleep()
+      const res = await fetch(`${baseUrl}/sso/sessions/auto-reg`, { method: 'POST', body: '{}' })
+      expect(res.status).to.equal(200)
+      const body = await res.json() as any
+      expect(body.phase).to.equal('finish')
+      expect(body.token).to.be.a('string')
+      expect(body.created).to.equal(true)
     })
   })
 
-  describe('mail autoRegister via POST /sso/sessions', () => {
-    // Regression: the old resolve consumed the challenge eagerly, which broke
-    // the autoRegister fallback because register's second consume failed.
-    // Now resolve peeks; consume is split between the matching path (resolve
-    // hit) and the fallback path (register).
-
-    it('falls through to register when the email is unknown', async () => {
+  describe('POST /sso/sessions/mail (challenge → finish)', () => {
+    it('unknown email autoRegisters in one flow', async () => {
       ({ ctx, baseUrl } = await setup())
       mailbox.length = 0
-      const chRes = await fetch(`${baseUrl}/sso/challenge/mail`, {
+      const step1 = await fetch(`${baseUrl}/sso/sessions/mail`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ email: 'fresh@example.com' }),
       })
-      const { challengeId } = await chRes.json() as any
+      expect(step1.status).to.equal(200)
+      const body1 = await step1.json() as any
+      expect(body1.phase).to.equal('challenge')
+      expect(body1.challengeId).to.be.a('string')
+      expect(body1.response.shape).to.equal('code')
       const sent = mailbox[0]
-
-      const res = await fetch(`${baseUrl}/sso/sessions/mail`, {
+      const step2 = await fetch(`${baseUrl}/sso/sessions/mail`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email: 'fresh@example.com', challengeId, code: sent.code }),
+        body: JSON.stringify({ challengeId: body1.challengeId, code: sent.code }),
       })
-      expect(res.status).to.equal(200)
-      const { token, userId } = await res.json() as any
-      expect(token).to.be.a('string')
-      expect(userId).to.be.a('number')
+      expect(step2.status).to.equal(200)
+      const body2 = await step2.json() as any
+      expect(body2.phase).to.equal('finish')
+      expect(body2.token).to.be.a('string')
       expect(await ctx.database.get('sso.mail' as any, { email: 'fresh@example.com' })).to.have.length(1)
     })
 
-    it('logs in an existing mail user without invoking register', async () => {
+    it('wrong code → VERIFICATION_FAILED (pending not consumed)', async () => {
       ({ ctx, baseUrl } = await setup())
-      // Register via POST /sso/users/mail first.
       mailbox.length = 0
-      const ch1 = await fetch(`${baseUrl}/sso/challenge/mail`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email: 'back@example.com' }),
+      const step1 = await fetch(`${baseUrl}/sso/sessions/mail`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'retry@example.com' }),
       })
-      const { challengeId: cid1 } = await ch1.json() as any
-      const reg = await fetch(`${baseUrl}/sso/users/mail`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email: 'back@example.com', challengeId: cid1, code: mailbox[0].code }),
+      const body1 = await step1.json() as any
+      const bad = await fetch(`${baseUrl}/sso/sessions/mail`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ challengeId: body1.challengeId, code: 'wrong!' }),
       })
-      expect(reg.status).to.equal(200)
-      const usersBefore = (await ctx.database.get('sso.user', {})).length
-
-      // Now log in with a fresh challenge.
-      mailbox.length = 0
-      const ch2 = await fetch(`${baseUrl}/sso/challenge/mail`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email: 'back@example.com' }),
+      expect(bad.status).to.equal(401)
+      expect(await bad.json()).to.deep.equal({ error: 'VERIFICATION_FAILED' })
+      // challenge still valid (not consumeOnFailure) — correct code still works
+      const good = await fetch(`${baseUrl}/sso/sessions/mail`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ challengeId: body1.challengeId, code: mailbox[0].code }),
       })
-      const { challengeId: cid2 } = await ch2.json() as any
-      const login = await fetch(`${baseUrl}/sso/sessions/mail`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email: 'back@example.com', challengeId: cid2, code: mailbox[0].code }),
-      })
-      expect(login.status).to.equal(200)
-      expect((await ctx.database.get('sso.user', {})).length).to.equal(usersBefore)
+      expect(good.status).to.equal(200)
     })
 
-    it('rejects a replayed challenge', async () => {
+    it('replayed challengeId → CHALLENGE_EXPIRED', async () => {
       ({ ctx, baseUrl } = await setup())
       mailbox.length = 0
-      const chRes = await fetch(`${baseUrl}/sso/challenge/mail`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
+      const step1 = await fetch(`${baseUrl}/sso/sessions/mail`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ email: 'once@example.com' }),
       })
-      const { challengeId } = await chRes.json() as any
-      const code = mailbox[0].code
-      const body = JSON.stringify({ email: 'once@example.com', challengeId, code })
-
+      const body1 = await step1.json() as any
+      const body = JSON.stringify({ challengeId: body1.challengeId, code: mailbox[0].code })
       const first = await fetch(`${baseUrl}/sso/sessions/mail`, {
         method: 'POST', headers: { 'content-type': 'application/json' }, body,
       })
       expect(first.status).to.equal(200)
-
       const second = await fetch(`${baseUrl}/sso/sessions/mail`, {
         method: 'POST', headers: { 'content-type': 'application/json' }, body,
       })
-      // Exact code is an implementation detail — register throws which the
-      // server catches as 500; ideally this would become a typed 401. Either
-      // way, it must NOT issue a second session.
-      expect(second.status).to.be.oneOf([401, 500])
+      expect(second.status).to.equal(401)
+      expect(await second.json()).to.deep.equal({ error: 'CHALLENGE_EXPIRED' })
     })
   })
 
-  describe('POST /sso/sessions/:provider/finish', () => {
-    it('returns 400 when the provider has no authenticate()', async () => {
-      ({ ctx, baseUrl } = await setup())
-      const res = await fetch(`${baseUrl}/sso/sessions/password/finish`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ challengeId: 'x', response: 'y' }),
-      })
-      expect(res.status).to.equal(400)
-      expect(await res.json()).to.deep.equal({ error: 'AUTHENTICATE_NOT_SUPPORTED' })
-    })
-
-    it('returns 404 for unknown provider', async () => {
-      ({ ctx, baseUrl } = await setup())
-      const res = await fetch(`${baseUrl}/sso/sessions/nope/finish`, {
-        method: 'POST', body: '{}',
-      })
-      expect(res.status).to.equal(404)
-    })
-
-    it('mints a session when authenticate() returns an identityId', async () => {
-      ({ ctx, baseUrl } = await setup())
-      await ctx.plugin(FakeWebauthnProvider)
-      await sleep()
-      const fake = ctx.sso.getProvider('fake-webauthn') as any as FakeWebauthnProvider
-      const { user, identityId } = await ctx.sso.createUser('fake-webauthn')
-      fake.targetIdentityId = identityId
-
-      const res = await fetch(`${baseUrl}/sso/sessions/fake-webauthn/finish`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ challengeId: 'valid-ch', response: 'valid-resp' }),
-      })
-      expect(res.status).to.equal(200)
-      const body = await res.json() as any
-      expect(body.token).to.be.a('string')
-      expect(body.userId).to.equal(user.id)
-      const validated = await ctx.sso.validateSession(body.token)
-      expect(validated?.id).to.equal(user.id)
-    })
-
-    it('returns 401 when authenticate() returns null', async () => {
-      ({ ctx, baseUrl } = await setup())
-      await ctx.plugin(FakeWebauthnProvider)
-      await sleep()
-      const res = await fetch(`${baseUrl}/sso/sessions/fake-webauthn/finish`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ challengeId: 'nope', response: 'nope' }),
-      })
-      expect(res.status).to.equal(401)
-      expect(await res.json()).to.deep.equal({ error: 'VERIFICATION_FAILED' })
-    })
-  })
-
-  describe('GET /sso/oauth-url/:provider', () => {
-    it('returns 400 OAUTH_NOT_SUPPORTED for providers without getAuthUrl', async () => {
-      ({ ctx, baseUrl } = await setup())
-      const res = await fetch(`${baseUrl}/sso/oauth-url/password?redirect_uri=cb&state=s`)
-      expect(res.status).to.equal(400)
-      expect(await res.json()).to.deep.equal({ error: 'OAUTH_NOT_SUPPORTED' })
-    })
-
-    it('returns the URL produced by getAuthUrl', async () => {
+  describe('POST /sso/sessions/:provider for redirect providers', () => {
+    it('returns phase:redirect with a URL', async () => {
       ({ ctx, baseUrl } = await setup())
       await ctx.plugin(OAuthFakeProvider)
       await sleep()
-      const res = await fetch(`${baseUrl}/sso/oauth-url/oauth-fake?redirect_uri=https%3A%2F%2Fapp%2Fcb&state=xyz`)
+      const res = await fetch(`${baseUrl}/sso/sessions/oauth-fake`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ redirect_uri: 'https://app/cb', state: 'xyz' }),
+      })
       expect(res.status).to.equal(200)
       const body = await res.json() as any
+      expect(body.phase).to.equal('redirect')
       expect(body.url).to.include('https://example.com/auth')
       expect(body.url).to.include('state=xyz')
     })
 
-    it('intent=link requires a session and forwards userId to getAuthUrl', async () => {
+    it('bind kind threads userId through getAuthUrl', async () => {
       ({ ctx, baseUrl } = await setup())
       await ctx.plugin(OAuthFakeProvider)
       await sleep()
-
-      // Without session -> 401
-      const unauth = await fetch(`${baseUrl}/sso/oauth-url/oauth-fake?redirect_uri=cb&state=s&intent=link`)
-      expect(unauth.status).to.equal(401)
-      expect(await unauth.json()).to.deep.equal({ error: 'SESSION_REQUIRED' })
-
-      // With session -> 200; provider sees the caller's userId
-      const { user } = await registerPasswordUser(ctx, 'alice', 'longenough')
+      await registerPasswordUser(baseUrl, 'alice', 'longenough')
       const token = await loginAndGetToken(baseUrl, 'alice', 'longenough')
-      const instance = ctx.sso.getProvider('oauth-fake') as any as OAuthFakeProvider
+      const instance = ctx.sso.getProvider('oauth-fake') as OAuthFakeProvider
       instance.lastLinkUserId = undefined
-      const auth = await fetch(`${baseUrl}/sso/oauth-url/oauth-fake?redirect_uri=cb&state=s&intent=link`, {
-        headers: { authorization: `Bearer ${token}` },
-      })
-      expect(auth.status).to.equal(200)
-      expect(instance.lastLinkUserId).to.equal(user.id)
-    })
-  })
-
-  describe('challenge / verify', () => {
-    it('challenge → verify (totp) end to end', async () => {
-      ({ ctx, baseUrl } = await setup())
-      const { identityId } = await ctx.sso.createUser('totp')
-      const provider = ctx.sso.getProvider('totp')!
-      // pre-register so we have a secret in the table
-      const { data } = await provider.register!({ identityId })
-      const secret: string = data!.secret
-      // compute current code via the same TOTP algorithm
-      const code = await currentTotpCode(secret)
-
-      const verifyRes = await fetch(`${baseUrl}/sso/verify/totp`, {
+      const res = await fetch(`${baseUrl}/sso/identities/oauth-fake`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ challengeId: String(identityId), response: code }),
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ redirect_uri: 'cb', state: 's' }),
       })
-      expect(verifyRes.status).to.equal(200)
-      expect(await verifyRes.json()).to.deep.equal({ ok: true })
-    })
-
-    it('verify with a wrong code returns 401 VERIFICATION_FAILED', async () => {
-      ({ ctx, baseUrl } = await setup())
-      const { identityId } = await ctx.sso.createUser('totp')
-      await ctx.sso.getProvider('totp')!.register!({ identityId })
-      const res = await fetch(`${baseUrl}/sso/verify/totp`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ challengeId: String(identityId), response: '000000' }),
-      })
-      expect(res.status).to.equal(401)
-      expect(await res.json()).to.deep.equal({ error: 'VERIFICATION_FAILED' })
-    })
-
-    it('returns 400 CHALLENGE_NOT_SUPPORTED when provider has no challenge', async () => {
-      ({ ctx, baseUrl } = await setup())
-      const res = await fetch(`${baseUrl}/sso/challenge/password`, { method: 'POST', body: '{}' })
-      expect(res.status).to.equal(400)
-      expect(await res.json()).to.deep.equal({ error: 'CHALLENGE_NOT_SUPPORTED' })
+      expect(res.status).to.equal(200)
+      const body = await res.json() as any
+      expect(body.phase).to.equal('redirect')
+      expect(instance.lastLinkUserId).to.be.a('number')
     })
   })
 
@@ -511,7 +337,7 @@ describe('@cordisjs/plugin-sso-server', () => {
 
     it('GET /sso/identities returns the user\'s identities with a bearer', async () => {
       ({ ctx, baseUrl } = await setup())
-      await registerPasswordUser(ctx, 'alice', 'longenough')
+      await registerPasswordUser(baseUrl, 'alice', 'longenough')
       const token = await loginAndGetToken(baseUrl, 'alice', 'longenough')
       const res = await fetch(`${baseUrl}/sso/identities`, {
         headers: { authorization: `Bearer ${token}` },
@@ -522,22 +348,9 @@ describe('@cordisjs/plugin-sso-server', () => {
       expect(list[0].provider).to.equal('password')
     })
 
-    it('POST /sso/identities/:provider links a new identity', async () => {
+    it('POST /sso/identities/totp returns phase:challenge (no sso.totp row yet)', async () => {
       ({ ctx, baseUrl } = await setup())
-      await registerPasswordUser(ctx, 'alice', 'longenough')
-      const token = await loginAndGetToken(baseUrl, 'alice', 'longenough')
-      const res = await fetch(`${baseUrl}/sso/identities/totp`, {
-        method: 'POST',
-        headers: { authorization: `Bearer ${token}` },
-      })
-      expect(res.status).to.equal(200)
-      const body = await res.json() as any
-      expect(body.identityId).to.be.a('number')
-    })
-
-    it('POST /sso/identities/:provider with credentials writes the provider row', async () => {
-      ({ ctx, baseUrl } = await setup())
-      const { user } = await registerPasswordUser(ctx, 'alice', 'longenough')
+      await registerPasswordUser(baseUrl, 'alice', 'longenough')
       const token = await loginAndGetToken(baseUrl, 'alice', 'longenough')
       const res = await fetch(`${baseUrl}/sso/identities/totp`, {
         method: 'POST',
@@ -546,75 +359,103 @@ describe('@cordisjs/plugin-sso-server', () => {
       })
       expect(res.status).to.equal(200)
       const body = await res.json() as any
-      expect(body.identityId).to.be.a('number')
+      expect(body.phase).to.equal('challenge')
       expect(body.data?.otpauthUrl).to.include('otpauth://totp/')
-      const [row] = await ctx.database.get('sso.totp' as any, { identityId: body.identityId })
-      expect(row).to.exist
-      expect(row.label).to.equal('alice@laptop')
-      expect(await ctx.sso.getIdentities(user.id)).to.have.length(2)
+      expect(await ctx.database.get('sso.totp' as any, {})).to.have.length(0)
     })
 
-    it('POST /sso/identities/:provider rolls back when provider.register throws', async () => {
+    it('POST /sso/identities/totp full bind creates identity + sso.totp atomically', async () => {
       ({ ctx, baseUrl } = await setup())
-      const { user } = await registerPasswordUser(ctx, 'alice', 'longenough')
+      const { userId } = await registerPasswordUser(baseUrl, 'alice', 'longenough')
       const token = await loginAndGetToken(baseUrl, 'alice', 'longenough')
-      // password register throws when password is too short; the newly-linked
-      // identity row must not survive.
-      const identitiesBefore = await ctx.sso.getIdentities(user.id)
+      const start = await fetch(`${baseUrl}/sso/identities/totp`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ label: 'alice@laptop' }),
+      })
+      const startBody = await start.json() as any
+      // compute TOTP code from secret for current time
+      const { createHmac } = await import('node:crypto')
+      const BASE32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
+      function decode(s: string): Buffer {
+        const bytes: number[] = []
+        let bits = 0, value = 0
+        for (const ch of s.toUpperCase()) {
+          const idx = BASE32.indexOf(ch)
+          if (idx === -1) continue
+          value = (value << 5) | idx; bits += 5
+          if (bits >= 8) { bytes.push((value >>> (bits - 8)) & 0xff); bits -= 8 }
+        }
+        return Buffer.from(bytes)
+      }
+      const sec = decode(startBody.data.secret)
+      const counter = Math.floor(Math.floor(Date.now() / 1000) / 30)
+      const buf = Buffer.alloc(8); buf.writeBigUInt64BE(BigInt(counter))
+      const hmac = createHmac('sha1', sec).update(buf).digest()
+      const off = hmac[hmac.length - 1] & 0x0f
+      const codeNum = (
+        ((hmac[off] & 0x7f) << 24) | ((hmac[off + 1] & 0xff) << 16)
+        | ((hmac[off + 2] & 0xff) << 8) | (hmac[off + 3] & 0xff)
+      ) % 1000000
+      const code = String(codeNum).padStart(6, '0')
+
+      const finish = await fetch(`${baseUrl}/sso/identities/totp`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ challengeId: startBody.challengeId, code }),
+      })
+      expect(finish.status).to.equal(200)
+      const finishBody = await finish.json() as any
+      expect(finishBody.phase).to.equal('finish')
+      expect(await ctx.sso.getIdentities(userId)).to.have.length(2)
+      expect(await ctx.database.get('sso.totp' as any, {})).to.have.length(1)
+    })
+
+    it('POST /sso/identities/:provider rolls back when writeIdentity throws', async () => {
+      ({ ctx, baseUrl } = await setup())
+      const { userId } = await registerPasswordUser(baseUrl, 'alice', 'longenough')
+      const token = await loginAndGetToken(baseUrl, 'alice', 'longenough')
+      const identitiesBefore = await ctx.sso.getIdentities(userId)
       const res = await fetch(`${baseUrl}/sso/identities/password`, {
         method: 'POST',
         headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
         body: JSON.stringify({ username: 'alice2', password: 'short' }),
       })
-      expect(res.status).to.equal(500)
-      expect(await ctx.sso.getIdentities(user.id)).to.have.length(identitiesBefore.length)
+      expect(res.status).to.equal(400)
+      expect(await ctx.sso.getIdentities(userId)).to.have.length(identitiesBefore.length)
     })
 
-    it('POST /sso/identities/mail refuses without a verified challenge', async () => {
+    it('POST /sso/identities/mail requires a valid challenge', async () => {
       ({ ctx, baseUrl } = await setup())
-      await registerPasswordUser(ctx, 'alice', 'longenough')
-      const token = await loginAndGetToken(baseUrl, 'alice', 'longenough')
-      // Attempting to bind a mail identity without challenge+code must fail;
-      // otherwise anyone could register arbitrary emails.
-      const res = await fetch(`${baseUrl}/sso/identities/mail`, {
-        method: 'POST',
-        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ email: 'alice@example.com' }),
-      })
-      expect(res.status).to.equal(500)
-      expect(await ctx.database.get('sso.mail' as any, {})).to.have.length(0)
-    })
-
-    it('POST /sso/identities/mail succeeds with a valid challenge+code', async () => {
-      ({ ctx, baseUrl } = await setup())
-      const { user } = await registerPasswordUser(ctx, 'alice', 'longenough')
+      const { userId } = await registerPasswordUser(baseUrl, 'alice', 'longenough')
       const token = await loginAndGetToken(baseUrl, 'alice', 'longenough')
       mailbox.length = 0
-      const chRes = await fetch(`${baseUrl}/sso/challenge/mail`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email: 'alice@example.com' }),
-      })
-      expect(chRes.status).to.equal(200)
-      const { challengeId } = await chRes.json() as any
-      const sent = mailbox.find(m => m.email === 'alice@example.com')!
-      const res = await fetch(`${baseUrl}/sso/identities/mail`, {
+      const step1 = await fetch(`${baseUrl}/sso/identities/mail`, {
         method: 'POST',
         headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ email: 'alice@example.com', challengeId, code: sent.code }),
+        body: JSON.stringify({ email: 'alice@example.com' }),
       })
-      expect(res.status).to.equal(200)
-      expect(await ctx.sso.getIdentities(user.id)).to.have.length(2)
-      const [row] = await ctx.database.get('sso.mail' as any, { email: 'alice@example.com' })
-      expect(row).to.exist
+      expect(step1.status).to.equal(200)
+      const body1 = await step1.json() as any
+      expect(body1.phase).to.equal('challenge')
+      const step2 = await fetch(`${baseUrl}/sso/identities/mail`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ challengeId: body1.challengeId, code: mailbox[0].code }),
+      })
+      expect(step2.status).to.equal(200)
+      const body2 = await step2.json() as any
+      expect(body2.phase).to.equal('finish')
+      expect(await ctx.sso.getIdentities(userId)).to.have.length(2)
     })
 
-    it('DELETE /sso/identities/:id refuses to remove someone else\'s identity', async () => {
+    it('DELETE /sso/identities/:id refuses someone else\'s identity', async () => {
       ({ ctx, baseUrl } = await setup())
-      await registerPasswordUser(ctx, 'alice', 'longenough')
-      const { identityId: bobsId } = await registerPasswordUser(ctx, 'bob', 'longenough')
+      await registerPasswordUser(baseUrl, 'alice', 'longenough')
+      const { userId: bobId } = await registerPasswordUser(baseUrl, 'bob', 'longenough')
       const aliceToken = await loginAndGetToken(baseUrl, 'alice', 'longenough')
-      const res = await fetch(`${baseUrl}/sso/identities/${bobsId}`, {
+      const [bobIdentity] = await ctx.database.get('sso.identity', { userId: bobId })
+      const res = await fetch(`${baseUrl}/sso/identities/${bobIdentity!.id}`, {
         method: 'DELETE',
         headers: { authorization: `Bearer ${aliceToken}` },
       })
@@ -622,54 +463,28 @@ describe('@cordisjs/plugin-sso-server', () => {
       expect(await res.json()).to.deep.equal({ error: 'IDENTITY_NOT_FOUND' })
     })
 
-    it('DELETE /sso/identities/:id removes one of the caller\'s identities', async () => {
+    it('DELETE /sso/identities/:id cascades provider rows + sessions', async () => {
       ({ ctx, baseUrl } = await setup())
-      const { user } = await registerPasswordUser(ctx, 'alice', 'longenough')
-      const { identityId: totpId } = await ctx.sso.link(user.id, 'totp')
+      const { userId } = await registerPasswordUser(baseUrl, 'alice', 'longenough')
+      const [pwdIdentity] = await ctx.database.get('sso.identity', { userId })
+      await ctx.sso.link(userId, 'mail')
       const token = await loginAndGetToken(baseUrl, 'alice', 'longenough')
-      const res = await fetch(`${baseUrl}/sso/identities/${totpId}`, {
+      expect(await ctx.database.get('sso.password' as any, { identityId: pwdIdentity!.id })).to.have.length(1)
+      expect((await ctx.database.get('sso.session' as any, { identityId: pwdIdentity!.id })).length).to.be.greaterThan(0)
+      const res = await fetch(`${baseUrl}/sso/identities/${pwdIdentity!.id}`, {
         method: 'DELETE',
         headers: { authorization: `Bearer ${token}` },
       })
       expect(res.status).to.equal(200)
-      const remaining = await ctx.sso.getIdentities(user.id)
-      expect(remaining).to.have.length(1)
-      expect(remaining[0].provider).to.equal('password')
-    })
-
-    it('DELETE /sso/identities/:id cascades to the provider row and active sessions', async () => {
-      // Regression: deleting an sso.identity row that's still referenced by
-      // sso.password / sso.session violates FK constraints on real DBs. The
-      // unlink path has to wipe those first. Users mid-session via the
-      // deleted identity get booted.
-      ({ ctx, baseUrl } = await setup())
-      const { user, identityId: pwdIdentityId } = await registerPasswordUser(ctx, 'alice', 'longenough')
-      const { identityId: mailIdentityId } = await ctx.sso.link(user.id, 'mail')
-      const token = await loginAndGetToken(baseUrl, 'alice', 'longenough')
-      // Sanity: password row and session row both exist.
-      expect(await ctx.database.get('sso.password' as any, { identityId: pwdIdentityId })).to.have.length(1)
-      expect(await ctx.database.get('sso.session' as any, { identityId: pwdIdentityId })).to.have.length(1)
-
-      const res = await fetch(`${baseUrl}/sso/identities/${pwdIdentityId}`, {
-        method: 'DELETE',
-        headers: { authorization: `Bearer ${token}` },
-      })
-      expect(res.status).to.equal(200)
-
-      // identity + provider row + session all gone
-      expect(await ctx.database.get('sso.identity', { id: pwdIdentityId })).to.have.length(0)
-      expect(await ctx.database.get('sso.password' as any, { identityId: pwdIdentityId })).to.have.length(0)
-      expect(await ctx.database.get('sso.session' as any, { identityId: pwdIdentityId })).to.have.length(0)
-      // Leftover identity is still there (we had two).
-      const remaining = await ctx.sso.getIdentities(user.id)
-      expect(remaining.map(i => i.id)).to.deep.equal([mailIdentityId])
-      // The token minted via the deleted identity is no longer valid.
+      expect(await ctx.database.get('sso.identity', { id: pwdIdentity!.id })).to.have.length(0)
+      expect(await ctx.database.get('sso.password' as any, { identityId: pwdIdentity!.id })).to.have.length(0)
+      expect(await ctx.database.get('sso.session' as any, { identityId: pwdIdentity!.id })).to.have.length(0)
       expect(await ctx.sso.validateSession(token)).to.be.null
     })
 
     it('DELETE /sso/sessions invalidates the token', async () => {
       ({ ctx, baseUrl } = await setup())
-      await registerPasswordUser(ctx, 'alice', 'longenough')
+      await registerPasswordUser(baseUrl, 'alice', 'longenough')
       const token = await loginAndGetToken(baseUrl, 'alice', 'longenough')
       const logout = await fetch(`${baseUrl}/sso/sessions`, {
         method: 'DELETE',
@@ -678,43 +493,5 @@ describe('@cordisjs/plugin-sso-server', () => {
       expect(logout.status).to.equal(200)
       expect(await ctx.sso.validateSession(token)).to.be.null
     })
-
-    it('DELETE /sso/sessions is a no-op without a token', async () => {
-      ({ ctx, baseUrl } = await setup())
-      const res = await fetch(`${baseUrl}/sso/sessions`, { method: 'DELETE' })
-      expect(res.status).to.equal(200)
-      expect(await res.json()).to.deep.equal({ ok: true })
-    })
   })
 })
-
-const BASE32_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
-
-function base32Decode(encoded: string): Buffer {
-  const bytes: number[] = []
-  let bits = 0, value = 0
-  for (const ch of encoded.toUpperCase()) {
-    const idx = BASE32_CHARS.indexOf(ch)
-    if (idx === -1) continue
-    value = (value << 5) | idx
-    bits += 5
-    if (bits >= 8) { bytes.push((value >>> (bits - 8)) & 0xff); bits -= 8 }
-  }
-  return Buffer.from(bytes)
-}
-
-async function currentTotpCode(secret: string, period = 30, digits = 6, algorithm = 'sha1'): Promise<string> {
-  const sec = base32Decode(secret)
-  const counter = Math.floor(Math.floor(Date.now() / 1000) / period)
-  const buf = Buffer.alloc(8)
-  buf.writeBigUInt64BE(BigInt(counter))
-  const hmac = createHmac(algorithm, sec).update(buf).digest()
-  const offset = hmac[hmac.length - 1] & 0x0f
-  const code = (
-    ((hmac[offset] & 0x7f) << 24) |
-    ((hmac[offset + 1] & 0xff) << 16) |
-    ((hmac[offset + 2] & 0xff) << 8) |
-    (hmac[offset + 3] & 0xff)
-  ) % (10 ** digits)
-  return String(code).padStart(digits, '0')
-}

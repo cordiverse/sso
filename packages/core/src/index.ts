@@ -1,6 +1,7 @@
 import { Context, Inject, Service } from 'cordis'
 import type { Awaitable } from 'cosmokit'
 import type { Database } from '@cordisjs/plugin-database'
+import type {} from '@cordisjs/plugin-timer'
 import { randomUUID } from 'node:crypto'
 
 declare module 'cordis' {
@@ -20,44 +21,6 @@ declare module '@cordisjs/plugin-database' {
     'sso.identity': Identity
     'sso.session': Session
   }
-}
-
-@Inject('sso')
-@Inject('database')
-export abstract class SsoProvider {
-  abstract name: string
-  abstract type: Sso.ProviderType
-  abstract interactive: boolean
-  abstract autoRegister: boolean
-
-  constructor(public ctx: Context) {}
-
-  * [Service.init]() {
-    yield this.ctx.sso.register(this)
-  }
-
-  resolve?(credentials: any): Promise<{ identityId: number; data?: any } | null>
-  register?(credentials: any, db?: Database): Promise<{ data?: any } | void>
-  // Called by Sso.unlink() before the sso.identity row is deleted. Each
-  // provider is responsible for cleaning up its own sso.<name> table so the
-  // foreign key constraint doesn't block the identity delete. Called inside
-  // the same transaction as the identity+session cleanup, so throwing here
-  // rolls back the whole unlink.
-  unlink?(identityId: number, db?: Database): Promise<void>
-  // Map a human-typed login identifier (username / email / phone) to the
-  // owning userId. Optional — only providers whose identities are keyed by
-  // something a user would type (password, mail, sms) implement this.
-  // Used by webauthn's identifier-first challenge path to narrow
-  // allowCredentials to one user's passkeys; never consulted as a security
-  // gate, so returning null when the identifier isn't recognised is fine.
-  resolveUser?(identifier: string): Promise<number | null>
-  getAuthUrl?(redirectUri: string, state: string, link?: { userId: number }): string
-  challenge?(target: any): Promise<{ challengeId: string }>
-  verify?(challengeId: string, response: string): Promise<boolean>
-  // Challenge-based login finish step. Distinct from verify() because the
-  // session endpoint needs the identityId to mint a token, not just a bool.
-  // Currently only the webauthn provider implements this.
-  authenticate?(challengeId: string, response: string): Promise<{ identityId: number } | null>
 }
 
 export interface User {
@@ -83,6 +46,224 @@ export interface Session {
   expiresAt: Date
 }
 
+export function ssoError(status: number, code: string): Error {
+  const err: any = new Error(code)
+  err.status = status
+  err.code = code
+  return err
+}
+
+@Inject('sso')
+@Inject('database')
+export abstract class SsoProvider {
+  abstract name: string
+  abstract category: Sso.Category
+
+  canBePrimary = true
+  canStepUp = false
+  autoRegister = false
+  interactive = true
+
+  constructor(public ctx: Context) {}
+
+  * [Service.init]() {
+    yield this.ctx.sso.register(this)
+  }
+
+  abstract step(input: unknown, ctx: Sso.StepContext): Promise<Sso.StepResult>
+
+  unlink?(identityId: number, db?: Database): Promise<void>
+  resolveUser?(identifier: string): Promise<number | null>
+}
+
+@Inject('sso')
+@Inject('database')
+export abstract class CredentialsProvider<Creds = any> extends SsoProvider {
+  readonly category = 'credentials'
+
+  async step(input: Creds, ctx: Sso.StepContext): Promise<Sso.StepResult> {
+    if (ctx.kind === 'stepup') throw ssoError(400, 'STEP_NOT_SUPPORTED')
+
+    if (ctx.kind === 'login') {
+      const hit = await this.resolve(input)
+      if (hit) {
+        if (!this.canBePrimary) throw ssoError(400, 'NOT_PRIMARY_FACTOR')
+        const identity = await this.ctx.sso.getIdentity(hit.identityId)
+        if (!identity) throw ssoError(500, 'IDENTITY_NOT_FOUND')
+        const token = await this.ctx.sso.createSession(identity.userId, identity.id)
+        return { phase: 'finish', token, userId: identity.userId, identityId: identity.id, created: false }
+      }
+      if (!this.autoRegister) throw ssoError(401, 'ACCOUNT_NOT_FOUND')
+      return this.doRegister(input)
+    }
+
+    if (ctx.kind === 'register') {
+      return this.doRegister(input)
+    }
+
+    if (ctx.kind === 'bind') {
+      if (!ctx.userId) throw ssoError(401, 'SESSION_REQUIRED')
+      return this.ctx.database.transact(async (db) => {
+        const { identityId } = await this.ctx.sso.link(ctx.userId!, this.name, db)
+        await this.writeIdentity(ctx.userId!, identityId, input, db)
+        return { phase: 'finish', identityId, userId: ctx.userId, created: false }
+      })
+    }
+
+    throw ssoError(400, 'STEP_NOT_SUPPORTED')
+  }
+
+  private async doRegister(input: Creds): Promise<Sso.StepResult> {
+    return this.ctx.database.transact(async (db) => {
+      const { user, identityId } = await this.ctx.sso.createUser(this.name, db)
+      await this.writeIdentity(user.id, identityId, input, db)
+      const token = await this.ctx.sso.createSession(user.id, identityId, db)
+      return { phase: 'finish', token, userId: user.id, identityId, created: true }
+    })
+  }
+
+  abstract resolve(creds: Creds): Promise<{ identityId: number } | null>
+  abstract writeIdentity(userId: number, identityId: number, creds: Creds, db: Database): Promise<void>
+}
+
+@Inject('sso')
+@Inject('database')
+@Inject('timer')
+export abstract class ChallengeProvider<Init = any, Complete = any, Extra = unknown> extends SsoProvider {
+  readonly category = 'challenge'
+
+  protected challengeTtl = 10 * 60_000
+  protected consumeOnFailure = false
+
+  private pending = new Map<string, Sso.Pending<Extra>>()
+
+  async step(input: any, ctx: Sso.StepContext): Promise<Sso.StepResult> {
+    if (input?.challengeId) {
+      return this.completeStep(input, ctx)
+    }
+    return this.issueStep(input, ctx)
+  }
+
+  private async issueStep(input: Init, ctx: Sso.StepContext): Promise<Sso.StepResult> {
+    const issued = await this.issue(input, ctx)
+    const pending: Sso.Pending<Extra> = {
+      challengeId: issued.challengeId,
+      kind: ctx.kind,
+      userId: ctx.userId ?? ctx.stepupUserId,
+      extra: issued.extra,
+      expiresAt: Date.now() + this.challengeTtl,
+    }
+    this.pending.set(issued.challengeId, pending)
+    this.ctx.timeout(() => this.pending.delete(issued.challengeId), this.challengeTtl)
+    return { phase: 'challenge', challengeId: issued.challengeId, response: issued.response, data: issued.data }
+  }
+
+  private async completeStep(input: Complete & { challengeId: string }, ctx: Sso.StepContext): Promise<Sso.StepResult> {
+    const pending = this.pending.get(input.challengeId)
+    if (!pending || Date.now() > pending.expiresAt) {
+      this.pending.delete(input.challengeId)
+      throw ssoError(401, 'CHALLENGE_EXPIRED')
+    }
+
+    let ok = false
+    try {
+      ok = await this.verify(pending, input)
+    } catch (e) {
+      if (this.consumeOnFailure) this.pending.delete(input.challengeId)
+      throw e
+    }
+    if (!ok) {
+      if (this.consumeOnFailure) this.pending.delete(input.challengeId)
+      throw ssoError(401, 'VERIFICATION_FAILED')
+    }
+    this.pending.delete(input.challengeId)
+
+    const kind = pending.kind
+    if (kind === 'login') {
+      if (!this.canBePrimary) throw ssoError(400, 'NOT_PRIMARY_FACTOR')
+      const hit = await this.resolve(pending)
+      if (hit) {
+        const identity = await this.ctx.sso.getIdentity(hit.identityId)
+        if (!identity) throw ssoError(500, 'IDENTITY_NOT_FOUND')
+        const token = await this.ctx.sso.createSession(identity.userId, identity.id)
+        return { phase: 'finish', token, userId: identity.userId, identityId: identity.id, created: false }
+      }
+      if (!this.autoRegister) throw ssoError(401, 'ACCOUNT_NOT_FOUND')
+      return this.ctx.database.transact(async (db) => {
+        const { user, identityId } = await this.ctx.sso.createUser(this.name, db)
+        await this.writeIdentity(user.id, identityId, pending, db)
+        const token = await this.ctx.sso.createSession(user.id, identityId, db)
+        return { phase: 'finish', token, userId: user.id, identityId, created: true }
+      })
+    }
+
+    if (kind === 'register') {
+      return this.ctx.database.transact(async (db) => {
+        const { user, identityId } = await this.ctx.sso.createUser(this.name, db)
+        await this.writeIdentity(user.id, identityId, pending, db)
+        const token = await this.ctx.sso.createSession(user.id, identityId, db)
+        return { phase: 'finish', token, userId: user.id, identityId, created: true }
+      })
+    }
+
+    if (kind === 'bind') {
+      const userId = pending.userId
+      if (!userId) throw ssoError(401, 'SESSION_REQUIRED')
+      return this.ctx.database.transact(async (db) => {
+        const { identityId } = await this.ctx.sso.link(userId, this.name, db)
+        await this.writeIdentity(userId, identityId, pending, db)
+        return { phase: 'finish', identityId, userId, created: false }
+      })
+    }
+
+    if (kind === 'stepup') {
+      if (!this.canStepUp) throw ssoError(400, 'STEP_NOT_SUPPORTED')
+      const userId = pending.userId
+      if (!userId) throw ssoError(500, 'NO_STEPUP_USER')
+      const identities = await this.ctx.sso.getIdentities(userId)
+      const mine = identities.find((i) => i.provider === this.name)
+      if (!mine) throw ssoError(500, 'NO_STEPUP_IDENTITY')
+      const token = await this.ctx.sso.createSession(userId, mine.id)
+      return { phase: 'finish', token, userId, identityId: mine.id, created: false }
+    }
+
+    throw ssoError(400, 'STEP_NOT_SUPPORTED')
+  }
+
+  abstract issue(input: Init, ctx: Sso.StepContext): Promise<{
+    challengeId: string
+    response: Sso.ChallengeResponse
+    extra: Extra
+    data?: unknown
+  }>
+  abstract verify(pending: Sso.Pending<Extra>, input: Complete & { challengeId: string }): Promise<boolean>
+  abstract resolve(pending: Sso.Pending<Extra>): Promise<{ identityId: number } | null>
+  abstract writeIdentity(userId: number, identityId: number, pending: Sso.Pending<Extra>, db: Database): Promise<void>
+}
+
+@Inject('sso')
+@Inject('database')
+export abstract class RedirectProvider extends SsoProvider {
+  readonly category = 'redirect'
+
+  async step(input: any, ctx: Sso.StepContext): Promise<Sso.StepResult> {
+    if (ctx.kind === 'stepup') throw ssoError(400, 'STEP_NOT_SUPPORTED')
+    const redirectUri = input?.redirect_uri
+    const state = input?.state
+    if (!redirectUri || !state) throw ssoError(400, 'INVALID_REQUEST')
+    const link = ctx.kind === 'bind' && ctx.userId ? { userId: ctx.userId } : undefined
+    const url = await this.getAuthUrl(redirectUri, state, link, ctx)
+    return { phase: 'redirect', url }
+  }
+
+  abstract getAuthUrl(
+    redirectUri: string,
+    state: string,
+    link: { userId: number } | undefined,
+    ctx: Sso.StepContext,
+  ): string | Promise<string>
+}
+
 export namespace Sso {
   export interface Config {
     sessionMaxAge?: number
@@ -94,64 +275,72 @@ export namespace Sso {
     request?: any
   }
 
-  // Provider protocol shape — determines the client-side flow. Deliberately
-  // NOT indexed by provider name; adding a new provider should only require
-  // picking the right `type`, never editing client-side name tables.
-  //
-  // - 'credentials' — single POST with {…credentials}. password.
-  // - 'challenge'   — two-step: POST /sso/challenge/:provider to get a
-  //                   challengeId + a code delivered out-of-band (email/sms),
-  //                   then POST /sso/sessions (or /users or /identities)
-  //                   with {…credentials, challengeId, code}.
-  // - 'redirect'    — browser redirect to a third-party IdP, callback-driven.
-  //                   oauth / qq / wechat / twitter / apple.
-  // - 'totp'        — bind: POST /sso/identities returns {data: {otpauthUrl}}
-  //                   for QR rendering, then POST /sso/verify flips verified.
-  //                   Login goes through future 2FA step-up, not a primary
-  //                   session endpoint.
-  // - 'webauthn'    — bind: POST /sso/challenge returns navigator-options,
-  //                   browser ceremony signs, POST /sso/verify writes the
-  //                   credential. Login path is the same challenge/finish
-  //                   shape (TODO).
-  export type ProviderType =
-    | 'credentials'
-    | 'challenge'
-    | 'redirect'
-    | 'totp'
-    | 'webauthn'
+  export type Category = 'credentials' | 'challenge' | 'redirect'
+
+  export type IntentKind = 'login' | 'register' | 'bind' | 'stepup'
+
+  export interface StepContext {
+    kind: IntentKind
+    userId?: number
+    stepupId?: string
+    stepupUserId?: number
+    request?: any
+  }
+
+  export type Phase = 'finish' | 'challenge' | 'redirect' | 'stepup'
+
+  export type StepResult =
+    | { phase: 'finish'; token?: string; userId?: number; identityId?: number; created?: boolean }
+    | { phase: 'challenge'; challengeId: string; response: ChallengeResponse; data?: unknown }
+    | { phase: 'redirect'; url: string }
+    | { phase: 'stepup'; stepupId: string; factors: StepupFactor[] }
+
+  export type ChallengeResponse =
+    | { shape: 'code'; length: number; digits: boolean }
+    | { shape: 'webauthn-create'; options: any }
+    | { shape: 'webauthn-get'; options: any }
+
+  export interface StepupFactor {
+    provider: string
+    category: Category
+  }
+
+  export interface Pending<Extra = unknown> {
+    challengeId: string
+    kind: IntentKind
+    userId?: number
+    extra: Extra
+    expiresAt: number
+  }
 
   export interface ProviderMeta {
     name: string
-    type: ProviderType
-    interactive: boolean
+    category: Category
+    canBePrimary: boolean
+    canStepUp: boolean
     autoRegister: boolean
+    interactive: boolean
+  }
+
+  export interface StepupEntry {
+    stepupId: string
+    userId: number
+    primaryIdentityId: number
+    expiresAt: number
   }
 }
 
 @Inject('database')
 export class Sso extends Service {
   private _providers = new Map<string, SsoProvider>()
+  private _stepups = new Map<string, Sso.StepupEntry>()
 
   constructor(ctx: Context, public config: Sso.Config = {}) {
     super(ctx, 'sso')
 
     ctx.database.extend('sso.user', {
       id: 'unsigned(8)',
-      // name is the globally unique, user-facing login identifier ("@alice"
-      // style). Providers that expose a typed-identifier login (password's
-      // "username", mail's "email", sms's "phone") may also be used as
-      // hints, but name is THE canonical account-level identifier — it
-      // survives provider unlinks and is what webauthn / future identifier-
-      // first flows narrow credentials by. Nullable to allow OAuth-only
-      // accounts that never picked a handle; SQL allows multiple NULLs
-      // under a unique constraint.
       name: 'string(255)',
-      // display is the human-readable label shown on profile pages, in
-      // OIDC `name`, and in OS passkey managers (via webauthn's
-      // userDisplayName). Not unique — two people can both be "Alice".
-      // Populated by the registering provider with a sensible initial
-      // guess (username for password, email local-part for mail, nickname
-      // for OAuth, etc.), and editable by the user afterwards.
       display: 'string(255)',
       createdAt: 'timestamp',
       updatedAt: 'timestamp',
@@ -203,9 +392,11 @@ export class Sso extends Service {
   async getProviderMetas(): Promise<Sso.ProviderMeta[]> {
     const base: Sso.ProviderMeta[] = this.getProviders().map((p) => ({
       name: p.name,
-      type: p.type,
-      interactive: p.interactive,
+      category: p.category,
+      canBePrimary: p.canBePrimary,
+      canStepUp: p.canStepUp,
       autoRegister: p.autoRegister,
+      interactive: p.interactive,
     }))
     return this.ctx.waterfall('sso/provider-meta', base, () => base)
   }
@@ -237,7 +428,6 @@ export class Sso extends Service {
       provider,
       createdAt: now,
     })
-    // update user.updatedAt
     await db.set('sso.user', { id: userId }, { updatedAt: now })
     return { identityId: identity.id }
   }
@@ -246,7 +436,6 @@ export class Sso extends Service {
     const [identity] = await this.ctx.database.get('sso.identity', { id: identityId })
     if (!identity) throw new Error('identity not found')
 
-    // ensure user has at least one other identity
     const identities = await this.ctx.database.get('sso.identity', { userId: identity.userId })
     if (identities.length <= 1) {
       throw new Error('cannot remove the last identity')
@@ -254,10 +443,7 @@ export class Sso extends Service {
 
     const provider = this._providers.get(identity.provider)
     await this.ctx.database.transact(async (db) => {
-      // Provider clears its own sso.<name> row (FK points here).
       await provider?.unlink?.(identityId, db)
-      // Kill any sessions anchored to this identity — anyone logged in with
-      // this specific identity will get 401 on their next request.
       await db.remove('sso.session', { identityId })
       await db.remove('sso.identity', { id: identityId })
       await db.set('sso.user', { id: identity.userId }, { updatedAt: new Date() })
@@ -273,19 +459,6 @@ export class Sso extends Service {
     return identity ?? null
   }
 
-  // Iterate all providers' resolveUser hooks and return every matching
-  // userId (deduplicated). Used by identifier-first flows (currently
-  // webauthn) where a client-typed hint needs to be mapped to users without
-  // committing to a specific provider upfront.
-  //
-  // Lookup order: sso.user.name (canonical account handle) first, then any
-  // provider that implements resolveUser (e.g. mail's email, sms's phone).
-  // Collisions ARE possible (e.g. one user's handle is "alice@foo.com",
-  // another user's mail is "alice@foo.com"). We return all of them and let
-  // callers decide the semantic — most pass ≥1 matches straight through
-  // (webauthn concats allowCredentials); a few treat >1 as a server-state
-  // error (password.resolve throws because it can't meaningfully check a
-  // password against multiple accounts at once).
   async findUserByIdentifier(identifier: string): Promise<number[]> {
     const seen = new Set<number>()
     const [nameHit] = await this.ctx.database.get('sso.user', { name: identifier })
@@ -299,7 +472,7 @@ export class Sso extends Service {
 
   async createSession(userId: number, identityId: number, db: Database = this.ctx.database): Promise<string> {
     const now = new Date()
-    const maxAge = this.config.sessionMaxAge ?? 7 * 24 * 60 * 60 * 1000 // 7 days
+    const maxAge = this.config.sessionMaxAge ?? 7 * 24 * 60 * 60 * 1000
     const token = randomUUID()
     await db.create('sso.session', {
       token,
@@ -332,6 +505,38 @@ export class Sso extends Service {
         await this.ctx.database.remove('sso.session', { token: session.token })
       }
     }
+  }
+
+  issueStepup(userId: number, primaryIdentityId: number, ttl = 5 * 60_000): string {
+    const stepupId = randomUUID()
+    this._stepups.set(stepupId, {
+      stepupId,
+      userId,
+      primaryIdentityId,
+      expiresAt: Date.now() + ttl,
+    })
+    return stepupId
+  }
+
+  consumeStepup(stepupId: string): Sso.StepupEntry | null {
+    const entry = this._stepups.get(stepupId)
+    if (!entry) return null
+    if (Date.now() > entry.expiresAt) {
+      this._stepups.delete(stepupId)
+      return null
+    }
+    this._stepups.delete(stepupId)
+    return entry
+  }
+
+  peekStepup(stepupId: string): Sso.StepupEntry | null {
+    const entry = this._stepups.get(stepupId)
+    if (!entry) return null
+    if (Date.now() > entry.expiresAt) {
+      this._stepups.delete(stepupId)
+      return null
+    }
+    return entry
   }
 }
 

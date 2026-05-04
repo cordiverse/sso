@@ -1,5 +1,5 @@
 import { Context, Inject } from 'cordis'
-import { SsoProvider } from '@cordisjs/plugin-sso'
+import { RedirectProvider, Sso } from '@cordisjs/plugin-sso'
 import { callbackResponse, handleOAuthCallback, StateStore } from '@cordisjs/oauth-utils'
 import type { Database } from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-server'
@@ -27,17 +27,17 @@ export interface Config {
   appId: string
   appSecret: string
   scope?: string
-  /** See OAuth provider's `redirectUrl` — same fragment-token semantics. */
   redirectUrl?: string
 }
 
 @Inject('server')
 @Inject('timer')
-export default class WeChatProvider extends SsoProvider {
+export default class WeChatProvider extends RedirectProvider {
   name = 'wechat'
-  type = 'redirect' as const
-  interactive = true
+  canBePrimary = true
+  canStepUp = false
   autoRegister = true
+  interactive = true
 
   private state: StateStore
 
@@ -136,7 +136,7 @@ export default class WeChatProvider extends SsoProvider {
     return res.json() as Promise<any>
   }
 
-  getAuthUrl(redirectUri: string, state: string, link?: { userId: number }) {
+  getAuthUrl(redirectUri: string, state: string, link: { userId: number } | undefined, _ctx: Sso.StepContext) {
     this.state.register(state, redirectUri, link ? { link } : undefined)
     const scope = this.config.scope ?? 'snsapi_login'
     const params = new URLSearchParams({
@@ -147,12 +147,6 @@ export default class WeChatProvider extends SsoProvider {
       state,
     })
     return `https://open.weixin.qq.com/connect/qrconnect?${params}#wechat_redirect`
-  }
-
-  async resolve(credentials: any) {
-    // The WeChat flow is driven by GET /sso/callback/wechat above; direct
-    // POST /sso/sessions/wechat is not a meaningful path.
-    return null
   }
 
   async unlink(identityId: number, db: Database = this.ctx.database) {

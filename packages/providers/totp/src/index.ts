@@ -1,8 +1,8 @@
 import { Context } from 'cordis'
-import { createHmac, randomBytes } from 'node:crypto'
+import { createHmac, randomBytes, randomUUID } from 'node:crypto'
 import type { Database } from '@cordisjs/plugin-database'
-import type {} from '@cordisjs/plugin-database'
-import { SsoProvider } from '@cordisjs/plugin-sso'
+import type {} from '@cordisjs/plugin-timer'
+import { ChallengeProvider, Sso, ssoError } from '@cordisjs/plugin-sso'
 
 declare module '@cordisjs/plugin-database' {
   interface Tables {
@@ -14,7 +14,6 @@ export interface SsoTotp {
   identityId: number
   secret: string
   label?: string
-  verified: boolean
 }
 
 export interface Config {
@@ -23,6 +22,7 @@ export interface Config {
   digits?: number
   algorithm?: 'sha1' | 'sha256' | 'sha512'
   window?: number
+  challengeTtl?: number
 }
 
 const BASE32_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
@@ -77,11 +77,25 @@ function generateTOTP(secret: Buffer, time: number, period: number, digits: numb
   return String(code).padStart(digits, '0')
 }
 
-export default class TotpProvider extends SsoProvider {
+interface TotpInit {
+  label?: string
+}
+
+interface TotpComplete {
+  code: string
+}
+
+interface TotpExtra {
+  secret: string | null
+  label?: string
+}
+
+export default class TotpProvider extends ChallengeProvider<TotpInit, TotpComplete, TotpExtra> {
   name = 'totp'
-  type = 'totp' as const
-  interactive = false
+  canBePrimary = false
+  canStepUp = true
   autoRegister = false
+  interactive = false
 
   private issuer: string
   private period: number
@@ -96,52 +110,80 @@ export default class TotpProvider extends SsoProvider {
     this.digits = config.digits ?? 6
     this.algorithm = config.algorithm ?? 'sha1'
     this.window = config.window ?? 1
+    if (config.challengeTtl) this.challengeTtl = config.challengeTtl
 
     ctx.database.extend('sso.totp', {
       identityId: 'unsigned(8)',
       secret: 'string(255)',
       label: 'string(255)',
-      verified: { type: 'boolean', initial: false },
     }, {
       primary: 'identityId',
       foreign: { identityId: ['sso.identity', 'id'] },
     })
   }
 
-  // resolve is intentionally not implemented. TOTP is a second factor, not a
-  // primary credential — exposing it through POST /sso/sessions/totp would
-  // let anyone with an identityId + a 6-digit guess get a session. The
-  // step-up flow (login with primary provider → prompt for totp code →
-  // /sso/sessions/stepup/totp) will use `verify()` instead. See the TODO
-  // section in the sso CLAUDE.md for the planned shape.
-
-  async register(credentials: any, db: Database = this.ctx.database) {
-    const { identityId, label } = credentials
-    if (!identityId) throw new Error('identityId required')
-    const secretBytes = randomBytes(20)
-    const secret = base32Encode(secretBytes)
-    await db.create('sso.totp', { identityId, secret, label, verified: false })
-    const accountName = label || 'user'
-    const otpauthUrl = `otpauth://totp/${encodeURIComponent(this.issuer)}:${encodeURIComponent(accountName)}`
-      + `?secret=${secret}&issuer=${encodeURIComponent(this.issuer)}&algorithm=${this.algorithm.toUpperCase()}`
-      + `&digits=${this.digits}&period=${this.period}`
-    return { data: { secret, otpauthUrl } }
+  async issue(input: TotpInit, ctx: Sso.StepContext) {
+    const challengeId = randomUUID()
+    if (ctx.kind === 'bind') {
+      const secretBytes = randomBytes(20)
+      const secret = base32Encode(secretBytes)
+      let accountName: string | undefined = input?.label
+      if (!accountName && ctx.userId) {
+        const [owner] = await this.ctx.database.get('sso.user', { id: ctx.userId })
+        accountName = owner?.name ?? owner?.display
+      }
+      accountName = accountName ?? 'User'
+      const otpauthUrl =
+        `otpauth://totp/${encodeURIComponent(this.issuer)}:${encodeURIComponent(accountName)}`
+        + `?secret=${secret}&issuer=${encodeURIComponent(this.issuer)}`
+        + `&algorithm=${this.algorithm.toUpperCase()}&digits=${this.digits}&period=${this.period}`
+      return {
+        challengeId,
+        response: { shape: 'code' as const, length: this.digits, digits: true },
+        extra: { secret, label: input?.label },
+        data: { otpauthUrl, secret },
+      }
+    }
+    return {
+      challengeId,
+      response: { shape: 'code' as const, length: this.digits, digits: true },
+      extra: { secret: null },
+    }
   }
 
-  async verify(challengeId: string, response: string) {
-    const identityId = parseInt(challengeId)
-    const [record] = await this.ctx.database.get('sso.totp', { identityId })
-    if (!record) return false
-    const secret = base32Decode(record.secret)
+  async verify(pending: Sso.Pending<TotpExtra>, input: TotpComplete) {
+    const code = input?.code
+    if (!code) return false
+    let secretStr: string | null = pending.extra.secret
+    if (!secretStr) {
+      if (!pending.userId) return false
+      const identities = await this.ctx.sso.getIdentities(pending.userId)
+      const mine = identities.find((i) => i.provider === this.name)
+      if (!mine) return false
+      const [row] = await this.ctx.database.get('sso.totp', { identityId: mine.id })
+      if (!row) return false
+      secretStr = row.secret
+    }
+    const secret = base32Decode(secretStr)
     const now = Math.floor(Date.now() / 1000)
     for (let i = -this.window; i <= this.window; i++) {
       const expected = generateTOTP(secret, now + i * this.period, this.period, this.digits, this.algorithm)
-      if (expected === response) {
-        await this.ctx.database.set('sso.totp', { identityId }, { verified: true })
-        return true
-      }
+      if (expected === code) return true
     }
     return false
+  }
+
+  async resolve() {
+    return null
+  }
+
+  async writeIdentity(userId: number, identityId: number, pending: Sso.Pending<TotpExtra>, db: Database) {
+    if (!pending.extra.secret) throw ssoError(400, 'INVALID_REQUEST')
+    await db.create('sso.totp', {
+      identityId,
+      secret: pending.extra.secret,
+      label: pending.extra.label,
+    })
   }
 
   async unlink(identityId: number, db: Database = this.ctx.database) {

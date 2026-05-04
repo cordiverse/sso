@@ -1,5 +1,5 @@
 import { Context, Inject } from 'cordis'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import {
   AuthenticationResponseJSON,
   generateAuthenticationOptions,
@@ -9,7 +9,7 @@ import {
   verifyRegistrationResponse,
   WebAuthnCredential,
 } from '@simplewebauthn/server'
-import { SsoProvider } from '@cordisjs/plugin-sso'
+import { ChallengeProvider, Sso, ssoError } from '@cordisjs/plugin-sso'
 import type { Database } from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-server'
 import type {} from '@cordisjs/plugin-timer'
@@ -34,44 +34,65 @@ export interface SsoWebAuthn {
 }
 
 export interface Config {
-  // All three default to values derived from ctx.server.baseUrl. Set
-  // explicitly only when you need to override — most commonly when the
-  // server sits behind a reverse proxy AND ctx.server.config.baseUrl isn't
-  // already set, OR when you want rpId to be a parent domain for cross-
-  // subdomain passkey sharing.
-  rpName?: string  // app name shown in the OS passkey picker; default 'Cordis'
-  rpId?: string    // registrable suffix of the server's origin, derived from baseUrl by default
-  origin?: string  // full scheme://host[:port] of the server, derived from baseUrl by default
-  timeout?: number // challenge TTL in ms; default 60000
+  rpName?: string
+  rpId?: string
+  origin?: string
+  timeout?: number
 }
 
-@Inject('server')
-@Inject('timer')
-export default class WebAuthnProvider extends SsoProvider {
-  name = 'webauthn'
-  type = 'webauthn' as const
-  interactive = true
-  autoRegister = false
+interface WebauthnInit {
+  hint?: string
+  name?: string
+  userName?: string
+  displayName?: string
+  deviceName?: string
+}
 
-  private challenges = new Map<string, PendingChallenge>()
+interface WebauthnComplete {
+  response: any
+  deviceName?: string
+}
+
+type WebauthnExtra =
+  | {
+    mode: 'register'
+    challenge: string
+    userName: string
+    displayName: string
+    newUserName?: string
+    verified?: {
+      credentialId: string
+      publicKey: string
+      signCount: number
+      deviceType: string
+      backedUp: boolean
+      transports?: string
+      deviceName?: string
+    }
+  }
+  | {
+    mode: 'authenticate'
+    challenge: string
+    matchedIdentityId?: number
+    newSignCount?: number
+  }
+
+@Inject('server')
+export default class WebAuthnProvider extends ChallengeProvider<WebauthnInit, WebauthnComplete, WebauthnExtra> {
+  name = 'webauthn'
+  canBePrimary = true
+  canStepUp = true
+  autoRegister = false
+  interactive = true
+
+  protected consumeOnFailure = true
+
   private rpName: string
   private rpId: string
   private origin: string
-  private timeout: number
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx)
-    // Derive defaults from ctx.server.baseUrl. baseUrl already respects
-    // server.config.baseUrl (explicitly configured public URL behind a
-    // proxy) and any intercept path prefix, so it's the right source of
-    // truth for "what URL will the browser actually use".
-    //
-    // Quirk: when the server binds to 0.0.0.0 / :: (default), baseUrl
-    // resolves to 127.0.0.1:PORT. Browsers in local dev almost always use
-    // the 'localhost' alias, and WebAuthn's rpId check is a strict string
-    // match against the browser's hostname — so fall back to 'localhost'
-    // for loopback addresses. If the user actually accesses via 127.0.0.1
-    // (or a LAN IP), they need to set `origin` + `rpId` explicitly.
     const base = new URL(ctx.server.baseUrl)
     let hostname = base.hostname
     if (hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]') {
@@ -81,7 +102,7 @@ export default class WebAuthnProvider extends SsoProvider {
     this.rpName = config.rpName ?? 'Cordis'
     this.rpId = config.rpId ?? hostname
     this.origin = config.origin ?? `${base.protocol}//${hostname}${port}`
-    this.timeout = config.timeout ?? 60000
+    this.challengeTtl = config.timeout ?? 60000
 
     ctx.database.extend('sso.webauthn', {
       identityId: 'unsigned(8)',
@@ -103,10 +124,10 @@ export default class WebAuthnProvider extends SsoProvider {
 
   private async getCredentialsForUser(userId: number): Promise<WebAuthnCredential[]> {
     const identities = await this.ctx.sso.getIdentities(userId)
-    const ids = identities.filter(i => i.provider === 'webauthn').map(i => i.id)
+    const ids = identities.filter((i) => i.provider === this.name).map((i) => i.id)
     if (!ids.length) return []
     const records = await this.ctx.database.get('sso.webauthn', { identityId: { $in: ids } })
-    return records.map(r => ({
+    return records.map((r) => ({
       id: r.credentialId,
       publicKey: Buffer.from(r.publicKey, 'base64'),
       counter: r.signCount,
@@ -114,148 +135,111 @@ export default class WebAuthnProvider extends SsoProvider {
     }))
   }
 
-  async challenge(target: any) {
-    const { type = 'authenticate', userName, userDisplayName, hint } = target
-    let { userId } = target
-    // Credentials to narrow the authenticate ceremony by. If we get ≥1
-    // userId (either explicit or via hint), concat their credentials. If 0,
-    // allowCredentials stays empty and the browser shows all passkeys —
-    // discoverable-credential flow. Ambiguous hints fall under the ≥1 case
-    // automatically (user picks their own passkey from the OS picker).
-    let authCredentials: WebAuthnCredential[] = []
-    if (type === 'authenticate') {
-      const userIds: number[] = userId
-        ? [userId]
-        : hint
-          ? await this.ctx.sso.findUserByIdentifier(hint)
-          : []
-      for (const id of userIds) {
-        authCredentials = authCredentials.concat(await this.getCredentialsForUser(id))
+  async issue(input: WebauthnInit, ctx: Sso.StepContext) {
+    const challengeId = randomUUID()
+    if (ctx.kind === 'register' || ctx.kind === 'bind') {
+      let userName = input?.userName ?? input?.name
+      let displayName = input?.displayName
+      if (ctx.userId && (!userName || !displayName)) {
+        const [owner] = await this.ctx.database.get('sso.user', { id: ctx.userId })
+        userName = userName ?? owner?.name ?? owner?.display
+        displayName = displayName ?? owner?.display ?? owner?.name ?? userName
       }
-      // Keep pending.userId set when there was exactly one match, so later
-      // per-user logic (if any) can use it. Not strictly needed today.
-      if (!userId && userIds.length === 1) userId = userIds[0]
-    }
-    const challengeId = randomBytes(16).toString('hex')
-
-    if (type === 'register') {
-      // userName is what the user would type at a login prompt (username /
-      // email); userDisplayName is the human-readable label shown in the OS
-      // passkey manager. Callers that know better should pass both; we fall
-      // back to a placeholder so the credential is still distinguishable.
-      const name = userName ?? `user-${userId}`
-      // Tell the browser which authenticators the user has already bound, so
-      // the OS rejects / warns on duplicate registration from the same
-      // device. Without this, repeated clicks silently produce new identity
-      // rows for the same physical passkey.
-      const existing = userId ? await this.getCredentialsForUser(userId) : []
+      userName = userName ?? 'User'
+      displayName = displayName ?? userName
+      const existing = ctx.userId ? await this.getCredentialsForUser(ctx.userId) : []
+      const userIdBytes = ctx.userId
+        ? Buffer.from(String(ctx.userId))
+        : randomBytes(16)
       const options = await generateRegistrationOptions({
         rpName: this.rpName,
         rpID: this.rpId,
-        userID: Buffer.from(String(userId)),
-        userName: name,
-        userDisplayName: userDisplayName ?? name,
-        timeout: this.timeout,
+        userID: userIdBytes,
+        userName,
+        userDisplayName: displayName,
+        timeout: this.challengeTtl,
         attestationType: 'none',
         authenticatorSelection: { userVerification: 'preferred' },
-        excludeCredentials: existing.map(c => ({ id: c.id, transports: c.transports })),
+        excludeCredentials: existing.map((c) => ({ id: c.id, transports: c.transports })),
       })
-      this.challenges.set(challengeId, {
-        challenge: options.challenge,
-        userId,
-        type: 'register',
-        expiresAt: Date.now() + this.timeout,
-      })
-      this.ctx.timeout(() => this.challenges.delete(challengeId), this.timeout)
-      return { challengeId, data: options }
+      return {
+        challengeId,
+        response: { shape: 'webauthn-create' as const, options },
+        extra: {
+          mode: 'register' as const,
+          challenge: options.challenge,
+          userName,
+          displayName,
+          newUserName: ctx.kind === 'register' ? input?.name : undefined,
+        },
+        data: options,
+      }
     }
 
+    // authenticate (login or stepup)
+    let authCredentials: WebAuthnCredential[] = []
+    if (ctx.userId) {
+      authCredentials = await this.getCredentialsForUser(ctx.userId)
+    } else if (input?.hint) {
+      const userIds = await this.ctx.sso.findUserByIdentifier(input.hint)
+      for (const id of userIds) {
+        authCredentials = authCredentials.concat(await this.getCredentialsForUser(id))
+      }
+    }
     const options = await generateAuthenticationOptions({
       rpID: this.rpId,
-      timeout: this.timeout,
-      allowCredentials: authCredentials.map(c => ({ id: c.id, transports: c.transports })),
+      timeout: this.challengeTtl,
+      allowCredentials: authCredentials.map((c) => ({ id: c.id, transports: c.transports })),
       userVerification: 'preferred',
     })
-    this.challenges.set(challengeId, {
-      challenge: options.challenge,
-      userId,
-      type: 'authenticate',
-      expiresAt: Date.now() + this.timeout,
-    })
-    this.ctx.timeout(() => this.challenges.delete(challengeId), this.timeout)
-    return { challengeId, data: options }
+    return {
+      challengeId,
+      response: { shape: 'webauthn-get' as const, options },
+      extra: {
+        mode: 'authenticate' as const,
+        challenge: options.challenge,
+      },
+      data: options,
+    }
   }
 
-  async verify(challengeId: string, response: string) {
-    const pending = this.challenges.get(challengeId)
-    if (!pending || Date.now() > pending.expiresAt) {
-      this.challenges.delete(challengeId)
-      return false
-    }
+  async verify(pending: Sso.Pending<WebauthnExtra>, input: WebauthnComplete) {
+    const responseBody = input?.response
+    if (!responseBody) return false
+    const body = typeof responseBody === 'string' ? JSON.parse(responseBody) : responseBody
 
-    if (pending.type === 'register') {
-      this.challenges.delete(challengeId)
-      const body = JSON.parse(response)
+    if (pending.extra.mode === 'register') {
       try {
         const verification = await verifyRegistrationResponse({
           response: body as RegistrationResponseJSON,
-          expectedChallenge: pending.challenge,
+          expectedChallenge: pending.extra.challenge,
           expectedOrigin: this.origin,
           expectedRPID: this.rpId,
         })
         if (!verification.verified || !verification.registrationInfo) return false
         const { credential, credentialDeviceType, credentialBackedUp } = verification.registrationInfo
-        const { deviceName } = body
-        // Tie the new credential to the user whose id was captured in the
-        // pending challenge. link() + create run in the same transaction so a
-        // post-attestation DB failure cannot leave an orphan sso.identity.
-        // SECURITY CAVEAT: the challenge endpoint doesn't authenticate, so a
-        // caller can challenge for any userId. Until /sso/challenge/webauthn
-        // is wrapped with a session check, treat webauthn binding as trusting
-        // the caller to be the session holder of `pending.userId`.
-        if (!pending.userId) return false
-        await this.ctx.database.transact(async (db) => {
-          const { identityId } = await this.ctx.sso.link(pending.userId!, 'webauthn', db)
-          await db.create('sso.webauthn', {
-            identityId,
-            credentialId: credential.id,
-            publicKey: Buffer.from(credential.publicKey).toString('base64'),
-            signCount: credential.counter,
-            deviceType: credentialDeviceType,
-            backedUp: credentialBackedUp,
-            deviceName,
-            transports: body.response?.transports ? JSON.stringify(body.response.transports) : undefined,
-            createdAt: new Date(),
-          })
-        })
+        pending.extra.verified = {
+          credentialId: credential.id,
+          publicKey: Buffer.from(credential.publicKey).toString('base64'),
+          signCount: credential.counter,
+          deviceType: credentialDeviceType,
+          backedUp: credentialBackedUp,
+          transports: body.response?.transports ? JSON.stringify(body.response.transports) : undefined,
+          deviceName: input.deviceName,
+        }
         return true
       } catch { return false }
     }
 
-    // authenticate branch delegates to the shared implementation below.
-    return !!(await this.authenticate(challengeId, response))
-  }
-
-  // Public method used by POST /sso/sessions/:provider/finish for passwordless
-  // login. Returns identityId on success so the session endpoint can mint a
-  // token; returns null for every failure mode (unknown challenge, wrong type,
-  // signature mismatch, unknown credential). Shares the challenge store with
-  // verify(): the first of {verify, authenticate} wins; subsequent calls see
-  // the challenge already deleted.
-  async authenticate(challengeId: string, response: string): Promise<{ identityId: number } | null> {
-    const pending = this.challenges.get(challengeId)
-    if (!pending || Date.now() > pending.expiresAt) {
-      this.challenges.delete(challengeId)
-      return null
-    }
-    if (pending.type !== 'authenticate') return null
-    this.challenges.delete(challengeId)
-
+    // authenticate
     try {
-      const body = JSON.parse(response)
       const credentialId = body.id
       const [record] = await this.ctx.database.get('sso.webauthn', { credentialId })
-      if (!record) return null
+      if (!record) return false
+      if (pending.userId) {
+        const identity = await this.ctx.sso.getIdentity(record.identityId)
+        if (!identity || identity.userId !== pending.userId) return false
+      }
       const credential: WebAuthnCredential = {
         id: record.credentialId,
         publicKey: Buffer.from(record.publicKey, 'base64'),
@@ -264,53 +248,57 @@ export default class WebAuthnProvider extends SsoProvider {
       }
       const verification = await verifyAuthenticationResponse({
         response: body as AuthenticationResponseJSON,
-        expectedChallenge: pending.challenge,
+        expectedChallenge: pending.extra.challenge,
         expectedOrigin: this.origin,
         expectedRPID: this.rpId,
         credential,
       })
-      if (!verification.verified) return null
+      if (!verification.verified) return false
+      pending.extra.matchedIdentityId = record.identityId
+      pending.extra.newSignCount = verification.authenticationInfo.newCounter
       await this.ctx.database.set('sso.webauthn', { credentialId }, {
         signCount: verification.authenticationInfo.newCounter,
         lastUsedAt: new Date(),
       })
-      return { identityId: record.identityId }
-    } catch { return null }
+      return true
+    } catch { return false }
   }
 
-  // resolve is intentionally not implemented. The old version looked up
-  // sso.webauthn by credentialId alone without verifying the signed challenge,
-  // which would have let anyone who knows a credential id get a session for
-  // its owner. Passwordless login MUST go through a challenge → verify pair
-  // (the authenticate branch of verify() below does proper signature checks)
-  // — see the TODO section in the sso CLAUDE.md.
+  async resolve(pending: Sso.Pending<WebauthnExtra>) {
+    if (pending.extra.mode !== 'authenticate') return null
+    if (!pending.extra.matchedIdentityId) return null
+    return { identityId: pending.extra.matchedIdentityId }
+  }
 
-  async register(credentials: any, db: Database = this.ctx.database) {
-    const { identityId, credentialId, publicKey, signCount, deviceType, backedUp, transports, deviceName } = credentials
-    if (!identityId || !credentialId || !publicKey) {
-      throw new Error('identityId, credentialId, and publicKey required')
-    }
+  async writeIdentity(userId: number, identityId: number, pending: Sso.Pending<WebauthnExtra>, db: Database) {
+    if (pending.extra.mode !== 'register') throw ssoError(400, 'INVALID_REQUEST')
+    const verified = pending.extra.verified
+    if (!verified) throw ssoError(500, 'VERIFICATION_STATE_LOST')
     await db.create('sso.webauthn', {
       identityId,
-      credentialId,
-      publicKey: typeof publicKey === 'string' ? publicKey : Buffer.from(publicKey).toString('base64'),
-      signCount: signCount ?? 0,
-      deviceType: deviceType ?? 'singleDevice',
-      backedUp: backedUp ?? false,
-      deviceName,
-      transports: transports ? JSON.stringify(transports) : undefined,
+      credentialId: verified.credentialId,
+      publicKey: verified.publicKey,
+      signCount: verified.signCount,
+      deviceType: verified.deviceType,
+      backedUp: verified.backedUp,
+      deviceName: verified.deviceName,
+      transports: verified.transports,
       createdAt: new Date(),
     })
+    if (pending.kind === 'register' && pending.extra.newUserName) {
+      const [owner] = await db.get('sso.user', { id: userId })
+      const update: { name?: string; display?: string } = { name: pending.extra.newUserName }
+      if (!owner?.display) update.display = pending.extra.displayName
+      await db.set('sso.user', { id: userId }, update)
+    } else {
+      const [owner] = await db.get('sso.user', { id: userId })
+      if (owner && !owner.display) {
+        await db.set('sso.user', { id: userId }, { display: pending.extra.displayName })
+      }
+    }
   }
 
   async unlink(identityId: number, db: Database = this.ctx.database) {
     await db.remove('sso.webauthn', { identityId })
   }
-}
-
-interface PendingChallenge {
-  challenge: string
-  userId?: number
-  type: 'register' | 'authenticate'
-  expiresAt: number
 }

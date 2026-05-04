@@ -1,5 +1,5 @@
 import { Context, Inject } from 'cordis'
-import { SsoProvider } from '@cordisjs/plugin-sso'
+import { RedirectProvider, Sso } from '@cordisjs/plugin-sso'
 import { callbackResponse, handleOAuthCallback, StateStore } from '@cordisjs/oauth-utils'
 import type { Database } from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-server'
@@ -37,11 +37,12 @@ function parseCallback(text: string): any {
 
 @Inject('server')
 @Inject('timer')
-export default class QqProvider extends SsoProvider {
+export default class QqProvider extends RedirectProvider {
   name = 'qq'
-  type = 'redirect' as const
-  interactive = true
+  canBePrimary = true
+  canStepUp = false
   autoRegister = true
+  interactive = true
 
   private state: StateStore
 
@@ -152,7 +153,7 @@ export default class QqProvider extends SsoProvider {
     return res.json() as Promise<any>
   }
 
-  getAuthUrl(redirectUri: string, state: string, link?: { userId: number }) {
+  getAuthUrl(redirectUri: string, state: string, link: { userId: number } | undefined, _ctx: Sso.StepContext) {
     this.state.register(state, redirectUri, link ? { link } : undefined)
     const params = new URLSearchParams({
       response_type: 'code',
@@ -162,12 +163,6 @@ export default class QqProvider extends SsoProvider {
       scope: 'get_user_info',
     })
     return `https://graph.qq.com/oauth2.0/authorize?${params}`
-  }
-
-  async resolve(credentials: any) {
-    // The QQ flow is driven by GET /sso/callback/qq above; direct
-    // POST /sso/sessions/qq is not a meaningful path.
-    return null
   }
 
   async unlink(identityId: number, db: Database = this.ctx.database) {

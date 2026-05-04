@@ -1,5 +1,5 @@
 import { Context, Inject } from 'cordis'
-import { SsoProvider } from '@cordisjs/plugin-sso'
+import { RedirectProvider, Sso } from '@cordisjs/plugin-sso'
 import { callbackResponse, handleOAuthCallback, PkceStore } from '@cordisjs/oauth-utils'
 import type { Database } from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-server'
@@ -31,11 +31,12 @@ export interface Config {
 
 @Inject('server')
 @Inject('timer')
-export default class TwitterProvider extends SsoProvider {
+export default class TwitterProvider extends RedirectProvider {
   name = 'twitter'
-  type = 'redirect' as const
-  interactive = true
+  canBePrimary = true
+  canStepUp = false
   autoRegister = true
+  interactive = true
 
   private pkce: PkceStore
 
@@ -117,7 +118,7 @@ export default class TwitterProvider extends SsoProvider {
     })
   }
 
-  getAuthUrl(redirectUri: string, state: string, link?: { userId: number }) {
+  getAuthUrl(redirectUri: string, state: string, link: { userId: number } | undefined, _ctx: Sso.StepContext) {
     const scope = this.config.scope ?? 'tweet.read users.read offline.access'
     const { codeChallenge, codeChallengeMethod } = this.pkce.register(state, redirectUri, link ? { link } : undefined)
     const params = new URLSearchParams({
@@ -149,12 +150,6 @@ export default class TwitterProvider extends SsoProvider {
       headers: { Authorization: `Bearer ${accessToken}` },
     })
     return ((await res.json()) as any).data
-  }
-
-  async resolve(credentials: any) {
-    // Driven entirely by the /sso/callback/twitter handler above; direct
-    // POST /sso/sessions/twitter is not a meaningful flow.
-    return null
   }
 
   async unlink(identityId: number, db: Database = this.ctx.database) {

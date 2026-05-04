@@ -19,151 +19,114 @@ namespace Password {
 }
 
 describe('@cordisjs/plugin-sso-password', () => {
-  describe('register', () => {
+  describe('register via step', () => {
     let ctx: Context
 
     beforeEach(async () => {
       ctx = await setup()
     })
 
-    it('hashes the password, stores a salt, and sets sso.user.name + display', async () => {
-      const { user, identityId } = await ctx.sso.createUser('password')
+    it('step(register) hashes the password, stores a salt, seeds sso.user.name + display', async () => {
       const provider = ctx.sso.getProvider('password')!
-      await provider.register!({ identityId, username: 'alice', password: 'longenough' })
+      const result = await provider.step({ username: 'alice', password: 'longenough' }, { kind: 'register' })
+      expect(result.phase).to.equal('finish')
+      const identityId = (result as any).identityId
       const [row] = await ctx.database.get('sso.password' as any, { identityId })
       expect(row).to.exist
       expect(row.hash).not.to.equal('longenough')
       expect(row.hash).to.match(/^[0-9a-f]+$/)
       expect(row.salt).to.have.length(32)
       expect(row.identityId).to.equal(identityId)
-      // The username lives on sso.user now, not in the password row.
-      const [updated] = await ctx.database.get('sso.user', { id: user.id })
+      const [updated] = await ctx.database.get('sso.user', { id: (result as any).userId })
       expect(updated.name).to.equal('alice')
-      // display seeded from username on first-time register.
       expect(updated.display).to.equal('alice')
     })
 
-    it('does not overwrite an existing sso.user.display', async () => {
+    it('does not overwrite an existing sso.user.display when binding', async () => {
       const { user, identityId } = await ctx.sso.createUser('password', undefined, { display: 'Pre-Set' })
       const provider = ctx.sso.getProvider('password')!
-      await provider.register!({ identityId, username: 'alice', password: 'longenough' })
+      await provider.step({ username: 'alice', password: 'longenough' }, { kind: 'bind', userId: user.id })
+      // The initial identity created by createUser is NOT the password-bound one — we just
+      // care that display survives binding.
       const [updated] = await ctx.database.get('sso.user', { id: user.id })
       expect(updated.display).to.equal('Pre-Set')
+      // name is set by writeIdentity on bind
       expect(updated.name).to.equal('alice')
     })
 
     it('rejects passwords shorter than minLength', async () => {
-      const { identityId } = await ctx.sso.createUser('password')
       const provider = ctx.sso.getProvider('password')!
-      let err: Error | undefined
+      let err: any
       try {
-        await provider.register!({ identityId, username: 'alice', password: 'short' })
-      } catch (e) { err = e as Error }
+        await provider.step({ username: 'alice', password: 'short' }, { kind: 'register' })
+      } catch (e) { err = e }
       expect(err).to.exist
-      expect(err!.message).to.match(/at least 8 characters/)
+      expect(err.code).to.equal('PASSWORD_TOO_SHORT')
     })
 
-    it('rejects missing username or password', async () => {
-      const { identityId } = await ctx.sso.createUser('password')
+    it('rejects missing fields on register', async () => {
       const provider = ctx.sso.getProvider('password')!
-      let e1: Error | undefined, e2: Error | undefined
-      try { await provider.register!({ identityId, password: 'longenough' }) } catch (e) { e1 = e as Error }
-      try { await provider.register!({ identityId, username: 'a' }) } catch (e) { e2 = e as Error }
-      expect(e1).to.exist
-      expect(e2).to.exist
+      let e1: any, e2: any
+      try { await provider.step({ password: 'longenough' }, { kind: 'register' }) } catch (e) { e1 = e }
+      try { await provider.step({ username: 'a' }, { kind: 'register' }) } catch (e) { e2 = e }
+      expect(e1?.code).to.equal('INVALID_REQUEST')
+      expect(e2?.code).to.equal('INVALID_REQUEST')
     })
 
-    it('rejects missing identityId', async () => {
+    it('rejects duplicate usernames on register', async () => {
       const provider = ctx.sso.getProvider('password')!
-      let err: Error | undefined
+      await provider.step({ username: 'alice', password: 'longenough' }, { kind: 'register' })
+      let err: any
       try {
-        await provider.register!({ username: 'alice', password: 'longenough' })
-      } catch (e) { err = e as Error }
+        await provider.step({ username: 'alice', password: 'longenough' }, { kind: 'register' })
+      } catch (e) { err = e }
       expect(err).to.exist
-      expect(err!.message).to.match(/identityId required/)
-    })
-
-    it('rejects duplicate usernames', async () => {
-      const { identityId: id1 } = await ctx.sso.createUser('password')
-      const { identityId: id2 } = await ctx.sso.createUser('password')
-      const provider = ctx.sso.getProvider('password')!
-      await provider.register!({ identityId: id1, username: 'alice', password: 'longenough' })
-      let err: Error | undefined
-      try {
-        await provider.register!({ identityId: id2, username: 'alice', password: 'longenough' })
-      } catch (e) { err = e as Error }
-      expect(err).to.exist
-      expect(err!.message).to.match(/already taken/)
+      expect(err.code).to.equal('USERNAME_TAKEN')
     })
   })
 
-  describe('resolve', () => {
+  describe('login via step', () => {
     let ctx: Context
-    let identityId: number
 
     beforeEach(async () => {
       ctx = await setup()
-      const created = await ctx.sso.createUser('password')
-      identityId = created.identityId
       const provider = ctx.sso.getProvider('password')!
-      await provider.register!({ identityId, username: 'alice', password: 'longenough' })
+      await provider.step({ username: 'alice', password: 'longenough' }, { kind: 'register' })
     })
 
-    it('accepts the correct password', async () => {
+    it('accepts the correct password and mints a session', async () => {
       const provider = ctx.sso.getProvider('password')!
-      const result = await provider.resolve!({ username: 'alice', password: 'longenough' })
-      expect(result).to.deep.equal({ identityId })
+      const result = await provider.step({ username: 'alice', password: 'longenough' }, { kind: 'login' })
+      expect(result.phase).to.equal('finish')
+      expect((result as any).token).to.be.a('string')
     })
 
-    it('rejects the wrong password', async () => {
+    it('autoRegister=false → ACCOUNT_NOT_FOUND on unknown username', async () => {
       const provider = ctx.sso.getProvider('password')!
-      expect(await provider.resolve!({ username: 'alice', password: 'wrong-password' })).to.be.null
-    })
-
-    it('rejects an unknown username', async () => {
-      const provider = ctx.sso.getProvider('password')!
-      expect(await provider.resolve!({ username: 'nobody', password: 'longenough' })).to.be.null
-    })
-
-    it('rejects missing fields', async () => {
-      const provider = ctx.sso.getProvider('password')!
-      expect(await provider.resolve!({ username: 'alice' })).to.be.null
-      expect(await provider.resolve!({ password: 'longenough' })).to.be.null
-    })
-
-    it('throws on ambiguous identifier (invariant violation)', async () => {
-      // Arrange a collision: another user's resolveUser also claims "alice".
-      const { user: other } = await ctx.sso.createUser('x')
-      class Collider extends (await import('@cordisjs/plugin-sso')).SsoProvider {
-        name = 'collider'
-        type = 'credentials' as const
-        interactive = false
-        autoRegister = false
-        async resolveUser(identifier: string) {
-          return identifier === 'alice' ? other.id : null
-        }
-      }
-      await ctx.plugin(Collider as any)
-      // Give the plugin a tick to register.
-      await new Promise(r => setTimeout(r, 0))
-      const provider = ctx.sso.getProvider('password')!
-      let err: Error | undefined
+      let err: any
       try {
-        await provider.resolve!({ username: 'alice', password: 'longenough' })
-      } catch (e) { err = e as Error }
-      expect(err).to.exist
-      expect(err!.message).to.match(/ambiguous/i)
+        await provider.step({ username: 'nobody', password: 'longenough' }, { kind: 'login' })
+      } catch (e) { err = e }
+      expect(err?.code).to.equal('ACCOUNT_NOT_FOUND')
+    })
+
+    it('wrong password → ACCOUNT_NOT_FOUND (no user enumeration)', async () => {
+      const provider = ctx.sso.getProvider('password')!
+      let err: any
+      try {
+        await provider.step({ username: 'alice', password: 'wrong-password' }, { kind: 'login' })
+      } catch (e) { err = e }
+      expect(err?.code).to.equal('ACCOUNT_NOT_FOUND')
     })
   })
 
   describe('algorithm config', () => {
     it('produces sha512-length hashes when configured', async () => {
       const ctx = await setup({ algorithm: 'sha512' })
-      const { identityId } = await ctx.sso.createUser('password')
       const provider = ctx.sso.getProvider('password')!
-      await provider.register!({ identityId, username: 'alice', password: 'longenough' })
-      const [row] = await ctx.database.get('sso.password' as any, { identityId })
-      expect(row.hash).to.have.length(128) // 512 bits = 64 bytes = 128 hex
+      const result = await provider.step({ username: 'alice', password: 'longenough' }, { kind: 'register' })
+      const [row] = await ctx.database.get('sso.password' as any, { identityId: (result as any).identityId })
+      expect(row.hash).to.have.length(128)
     })
   })
 })

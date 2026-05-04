@@ -1,6 +1,6 @@
 import { Context, Inject } from 'cordis'
 import { createPrivateKey, createSign, randomBytes } from 'node:crypto'
-import { SsoProvider } from '@cordisjs/plugin-sso'
+import { RedirectProvider, Sso } from '@cordisjs/plugin-sso'
 import { callbackResponse, decodeJwtPayload, handleOAuthCallback, StateStore } from '@cordisjs/oauth-utils'
 import type { Database } from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-server'
@@ -48,11 +48,12 @@ function decodeJWT(token: string): any {
 
 @Inject('server')
 @Inject('timer')
-export default class AppleProvider extends SsoProvider {
+export default class AppleProvider extends RedirectProvider {
   name = 'apple'
-  type = 'redirect' as const
-  interactive = true
+  canBePrimary = true
+  canStepUp = false
   autoRegister = true
+  interactive = true
 
   private state: StateStore
 
@@ -142,7 +143,7 @@ export default class AppleProvider extends SsoProvider {
     } catch { return undefined }
   }
 
-  getAuthUrl(redirectUri: string, state: string, link?: { userId: number }) {
+  getAuthUrl(redirectUri: string, state: string, link: { userId: number } | undefined, _ctx: Sso.StepContext) {
     const nonce = randomBytes(16).toString('base64url')
     this.state.register(state, redirectUri, { nonce, ...(link ? { link } : {}) })
     const params = new URLSearchParams({
@@ -155,12 +156,6 @@ export default class AppleProvider extends SsoProvider {
       nonce,
     })
     return `https://appleid.apple.com/auth/authorize?${params}`
-  }
-
-  async resolve(credentials: any) {
-    // The Apple flow is driven by POST /sso/callback/apple above; direct
-    // POST /sso/sessions/apple is not a meaningful path.
-    return null
   }
 
   async unlink(identityId: number, db: Database = this.ctx.database) {

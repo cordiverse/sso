@@ -1,12 +1,11 @@
-import { Context, Inject } from 'cordis'
+import { Context } from 'cordis'
 import { randomBytes, randomUUID } from 'node:crypto'
-import { SsoProvider } from '@cordisjs/plugin-sso'
+import { ChallengeProvider, Sso, ssoError } from '@cordisjs/plugin-sso'
 import type { Database } from '@cordisjs/plugin-database'
-import type {} from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-timer'
 
 function randomDigits(length: number): string {
-  return Array.from(randomBytes(length), b => (b % 10).toString()).join('')
+  return Array.from(randomBytes(length), (b) => (b % 10).toString()).join('')
 }
 
 declare module '@cordisjs/plugin-database' {
@@ -18,7 +17,6 @@ declare module '@cordisjs/plugin-database' {
 export interface SsoMail {
   identityId: number
   email: string
-  verified: boolean
 }
 
 export interface Config {
@@ -28,27 +26,32 @@ export interface Config {
   autoRegister?: boolean
 }
 
-interface PendingChallenge {
+interface MailInit {
   email: string
-  code: string
-  expiresAt: number
 }
 
-@Inject('timer')
-export default class MailProvider extends SsoProvider {
-  name = 'mail'
-  type = 'challenge' as const
-  interactive = true
-  autoRegister: boolean
+interface MailComplete {
+  code: string
+}
 
-  private challenges = new Map<string, PendingChallenge>()
-  private codeExpiry: number
+interface MailExtra {
+  email: string
+  code: string
+}
+
+export default class MailProvider extends ChallengeProvider<MailInit, MailComplete, MailExtra> {
+  name = 'mail'
+  canBePrimary = true
+  canStepUp = true
+  autoRegister: boolean
+  interactive = true
+
   private codeLength: number
   private send: (email: string, code: string) => Promise<void>
 
   constructor(ctx: Context, config: Config) {
     super(ctx)
-    this.codeExpiry = config.codeExpiry ?? 5 * 60 * 1000
+    this.challengeTtl = config.codeExpiry ?? 5 * 60 * 1000
     this.codeLength = config.codeLength ?? 6
     this.autoRegister = config.autoRegister ?? true
     this.send = config.send
@@ -56,7 +59,6 @@ export default class MailProvider extends SsoProvider {
     ctx.database.extend('sso.mail', {
       identityId: 'unsigned(8)',
       email: 'string(255)',
-      verified: { type: 'boolean', initial: false },
     }, {
       primary: 'identityId',
       unique: [['email']],
@@ -64,84 +66,38 @@ export default class MailProvider extends SsoProvider {
     })
   }
 
-  async challenge(target: any) {
-    const { email } = target
-    if (!email) throw new Error('email required')
-
+  async issue(input: MailInit) {
+    const email = input?.email
+    if (!email) throw ssoError(400, 'INVALID_REQUEST')
     const code = randomDigits(this.codeLength)
     const challengeId = randomUUID()
-
-    this.challenges.set(challengeId, {
-      email,
-      code,
-      expiresAt: Date.now() + this.codeExpiry,
-    })
-
-    this.ctx.timeout(() => this.challenges.delete(challengeId), this.codeExpiry)
     await this.send(email, code)
-
-    return { challengeId }
-  }
-
-  // Split verification from consumption so login (resolve) and register can
-  // share one challenge: resolve peeks, and only whichever of
-  // { resolve-hit, register } actually succeeds consumes. This keeps the
-  // autoRegister fallback path working — previously resolve consumed the
-  // challenge, then register's second consume failed and the whole session
-  // request threw 500.
-  private peekChallenge(email: string, challengeId: string, code: string): boolean {
-    const challenge = this.challenges.get(challengeId)
-    if (!challenge) return false
-    if (Date.now() > challenge.expiresAt) return false
-    if (challenge.email !== email) return false
-    if (challenge.code !== code) return false
-    return true
-  }
-
-  private consumeChallenge(email: string, challengeId: string, code: string): boolean {
-    if (!this.peekChallenge(email, challengeId, code)) {
-      // Still delete on pure-mismatch hits so an expired/mismatched challenge
-      // doesn't linger past its usefulness.
-      this.challenges.delete(challengeId)
-      return false
+    return {
+      challengeId,
+      response: { shape: 'code' as const, length: this.codeLength, digits: true },
+      extra: { email, code },
     }
-    this.challenges.delete(challengeId)
-    return true
   }
 
-  async resolve(credentials: any) {
-    const { email, challengeId, code } = credentials
-    if (!email || !challengeId || !code) return null
-    if (!this.peekChallenge(email, challengeId, code)) return null
-    const [record] = await this.ctx.database.get('sso.mail', { email })
+  async verify(pending: Sso.Pending<MailExtra>, input: MailComplete) {
+    return input?.code === pending.extra.code
+  }
+
+  async resolve(pending: Sso.Pending<MailExtra>) {
+    const [record] = await this.ctx.database.get('sso.mail', { email: pending.extra.email })
     if (!record) return null
-    // Match found — consume the challenge on our way out. If no match, the
-    // server will fall through to autoRegister (if enabled); register will
-    // consume then.
-    this.consumeChallenge(email, challengeId, code)
     return { identityId: record.identityId }
   }
 
-  async register(credentials: any, db: Database = this.ctx.database) {
-    const { identityId, email, challengeId, code } = credentials
-    if (!identityId) throw new Error('identityId required')
-    if (!email) throw new Error('email required')
-    if (!challengeId || !code) throw new Error('challengeId and code required')
-    if (!this.consumeChallenge(email, challengeId, code)) {
-      throw new Error('verification failed')
-    }
+  async writeIdentity(userId: number, identityId: number, pending: Sso.Pending<MailExtra>, db: Database) {
+    const email = pending.extra.email
     const [existing] = await db.get('sso.mail', { email })
-    if (existing) throw new Error('email already registered')
-    await db.create('sso.mail', { identityId, email, verified: true })
-    // Seed sso.user.display with the email's local part if nothing's there
-    // yet. Doesn't touch an already-populated display.
-    const [identity] = await db.get('sso.identity', { id: identityId })
-    if (identity) {
-      const [owner] = await db.get('sso.user', { id: identity.userId })
-      if (owner && !owner.display) {
-        const localPart = String(email).split('@')[0]
-        if (localPart) await db.set('sso.user', { id: identity.userId }, { display: localPart })
-      }
+    if (existing) throw ssoError(409, 'EMAIL_TAKEN')
+    await db.create('sso.mail', { identityId, email })
+    const [owner] = await db.get('sso.user', { id: userId })
+    if (owner && !owner.display) {
+      const localPart = String(email).split('@')[0]
+      if (localPart) await db.set('sso.user', { id: userId }, { display: localPart })
     }
   }
 
@@ -150,8 +106,6 @@ export default class MailProvider extends SsoProvider {
   }
 
   async resolveUser(identifier: string): Promise<number | null> {
-    // Cheap prefilter — the canonical findUserByIdentifier path hits every
-    // provider, so skip the DB when the string obviously isn't an email.
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier)) return null
     const [row] = await this.ctx.database.get('sso.mail', { email: identifier })
     if (!row) return null

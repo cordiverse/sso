@@ -1,6 +1,7 @@
 import { Context } from 'cordis'
 import Database from '@cordisjs/plugin-database'
 import MemoryDriver from '@cordisjs/plugin-database-memory'
+import Timer from '@cordisjs/plugin-timer'
 import Sso from '@cordisjs/plugin-sso'
 import { expect } from 'chai'
 import { install, InstalledClock } from '@sinonjs/fake-timers'
@@ -45,50 +46,43 @@ async function setup(config: TotpConfig = {}) {
   const ctx = new Context()
   await ctx.plugin(Database)
   await ctx.plugin(MemoryDriver)
+  await ctx.plugin(Timer)
   await ctx.plugin(Sso)
   await ctx.plugin(Totp, config)
   return ctx
 }
 
 describe('@cordisjs/plugin-sso-totp', () => {
-  describe('register', () => {
+  describe('bind (step 1 issue)', () => {
     let ctx: Context
 
     beforeEach(async () => {
       ctx = await setup()
     })
 
-    it('creates an unverified record with a base32 secret + otpauth url', async () => {
-      const { identityId } = await ctx.sso.createUser('totp')
+    it('returns a challenge with otpauthUrl + secret', async () => {
+      const { user } = await ctx.sso.createUser('x')
       const provider = ctx.sso.getProvider('totp')!
-      const result = await provider.register!({ identityId, label: 'alice@example.com' })
-      const data = result.data!
+      const result = await provider.step({ label: 'alice@example.com' }, { kind: 'bind', userId: user.id })
+      expect(result.phase).to.equal('challenge')
+      const data = (result as any).data
       expect(data.secret).to.be.a('string').and.match(/^[A-Z2-7]+$/)
       expect(data.otpauthUrl).to.match(/^otpauth:\/\/totp\//)
       expect(data.otpauthUrl).to.include(`secret=${data.secret}`)
-      expect(data.otpauthUrl).to.include('issuer=Cordis')
-      expect(data.otpauthUrl).to.include('algorithm=SHA1')
-      expect(data.otpauthUrl).to.include('digits=6')
-      expect(data.otpauthUrl).to.include('period=30')
-
-      const [row] = await ctx.database.get('sso.totp' as any, { identityId })
-      expect(row.verified).to.equal(false)
-      expect(row.label).to.equal('alice@example.com')
     })
 
-    it('rejects missing identityId', async () => {
+    it('leaves NO sso.totp rows before verification', async () => {
+      const { user } = await ctx.sso.createUser('x')
       const provider = ctx.sso.getProvider('totp')!
-      let err: Error | undefined
-      try { await provider.register!({}) } catch (e) { err = e as Error }
-      expect(err).to.exist
-      expect(err!.message).to.match(/identityId required/)
+      await provider.step({ label: 'l1' }, { kind: 'bind', userId: user.id })
+      expect(await ctx.database.get('sso.totp' as any, {})).to.have.length(0)
     })
   })
 
-  describe('verify + resolve', () => {
+  describe('bind (step 2 verify)', () => {
     let ctx: Context
     let clock: InstalledClock
-    const T0 = 1700000000000 // some fixed instant
+    const T0 = 1700000000000
 
     beforeEach(async () => {
       clock = install({ now: T0 })
@@ -99,58 +93,33 @@ describe('@cordisjs/plugin-sso-totp', () => {
       clock.uninstall()
     })
 
-    async function registerFor(identityId: number) {
+    it('valid code → atomic link + sso.totp row', async () => {
+      const { user } = await ctx.sso.createUser('x')
       const provider = ctx.sso.getProvider('totp')!
-      const { data } = await provider.register!({ identityId })
-      return data!.secret as string
-    }
-
-    it('verify accepts a correct code and flips verified=true', async () => {
-      const { identityId } = await ctx.sso.createUser('totp')
-      const secret = await registerFor(identityId)
+      const startResult = await provider.step({ label: 'alice' }, { kind: 'bind', userId: user.id })
+      const { challengeId } = startResult as any
+      const secret = (startResult as any).data.secret
       const code = totp(base32Decode(secret), Math.floor(T0 / 1000), 30, 6, 'sha1')
-      const provider = ctx.sso.getProvider('totp')!
-
-      // TOTP does not expose resolve — it is not a primary login factor. The
-      // only way to prove the code is provider.verify(), which doubles as
-      // the activation step for register and as the future 2FA step-up path.
-      expect(provider.resolve).to.equal(undefined)
-
-      const ok = await provider.verify!(String(identityId), code)
-      expect(ok).to.equal(true)
-
-      const [row] = await ctx.database.get('sso.totp' as any, { identityId })
-      expect(row.verified).to.equal(true)
+      const finishResult = await provider.step({ challengeId, code }, { kind: 'bind', userId: user.id })
+      expect(finishResult.phase).to.equal('finish')
+      const identities = await ctx.sso.getIdentities(user.id)
+      expect(identities.map(i => i.provider)).to.include('totp')
+      const rows = await ctx.database.get('sso.totp' as any, {})
+      expect(rows).to.have.length(1)
+      expect(rows[0].secret).to.equal(secret)
     })
 
-    it('verify rejects an incorrect code', async () => {
-      const { identityId } = await ctx.sso.createUser('totp')
-      await registerFor(identityId)
+    it('wrong code → VERIFICATION_FAILED, pending persists by default', async () => {
+      const { user } = await ctx.sso.createUser('x')
       const provider = ctx.sso.getProvider('totp')!
-      expect(await provider.verify!(String(identityId), '000000')).to.equal(false)
-    })
-
-    it('verify accepts codes within ±window periods', async () => {
-      const { identityId } = await ctx.sso.createUser('totp')
-      const secret = await registerFor(identityId)
-      const provider = ctx.sso.getProvider('totp')!
-      const t = Math.floor(T0 / 1000)
-      const sec = base32Decode(secret)
-
-      // default window = 1 → previous and next 30s slots both accepted
-      const codePast = totp(sec, t - 30, 30, 6, 'sha1')
-      const codeFuture = totp(sec, t + 30, 30, 6, 'sha1')
-      expect(await provider.verify!(String(identityId), codePast)).to.equal(true)
-      expect(await provider.verify!(String(identityId), codeFuture)).to.equal(true)
-    })
-
-    it('rejects a code outside the window', async () => {
-      const { identityId } = await ctx.sso.createUser('totp')
-      const secret = await registerFor(identityId)
-      const provider = ctx.sso.getProvider('totp')!
-      const t = Math.floor(T0 / 1000)
-      const codeFar = totp(base32Decode(secret), t + 90, 30, 6, 'sha1')
-      expect(await provider.verify!(String(identityId), codeFar)).to.equal(false)
+      const start = await provider.step({}, { kind: 'bind', userId: user.id })
+      const { challengeId } = start as any
+      let err: any
+      try {
+        await provider.step({ challengeId, code: '000000' }, { kind: 'bind', userId: user.id })
+      } catch (e) { err = e }
+      expect(err?.code).to.equal('VERIFICATION_FAILED')
+      expect(await ctx.database.get('sso.totp' as any, {})).to.have.length(0)
     })
   })
 
@@ -168,17 +137,18 @@ describe('@cordisjs/plugin-sso-totp', () => {
 
     it('honors digits / period / algorithm', async () => {
       const ctx = await setup({ digits: 8, period: 60, algorithm: 'sha256', issuer: 'TestCo' })
-      const { identityId } = await ctx.sso.createUser('totp')
+      const { user } = await ctx.sso.createUser('x')
       const provider = ctx.sso.getProvider('totp')!
-      const { data } = await provider.register!({ identityId, label: 'bob' })
-      expect(data!.otpauthUrl).to.include('digits=8')
-      expect(data!.otpauthUrl).to.include('period=60')
-      expect(data!.otpauthUrl).to.include('algorithm=SHA256')
-      expect(data!.otpauthUrl).to.include('issuer=TestCo')
-
-      const code = totp(base32Decode(data!.secret), Math.floor(T0 / 1000), 60, 8, 'sha256')
+      const start = await provider.step({ label: 'bob' }, { kind: 'bind', userId: user.id })
+      const data = (start as any).data
+      expect(data.otpauthUrl).to.include('digits=8')
+      expect(data.otpauthUrl).to.include('period=60')
+      expect(data.otpauthUrl).to.include('algorithm=SHA256')
+      expect(data.otpauthUrl).to.include('issuer=TestCo')
+      const code = totp(base32Decode(data.secret), Math.floor(T0 / 1000), 60, 8, 'sha256')
       expect(code).to.have.length(8)
-      expect(await provider.verify!(String(identityId), code)).to.equal(true)
+      const finish = await provider.step({ challengeId: (start as any).challengeId, code }, { kind: 'bind', userId: user.id })
+      expect(finish.phase).to.equal('finish')
     })
   })
 })
