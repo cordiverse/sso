@@ -41,6 +41,10 @@ export abstract class SsoProvider {
   getAuthUrl?(redirectUri: string, state: string, link?: { userId: number }): string
   challenge?(target: any): Promise<{ challengeId: string }>
   verify?(challengeId: string, response: string): Promise<boolean>
+  // Challenge-based login finish step. Distinct from verify() because the
+  // session endpoint needs the identityId to mint a token, not just a bool.
+  // Currently only the webauthn provider implements this.
+  authenticate?(challengeId: string, response: string): Promise<{ identityId: number } | null>
 }
 
 export interface User {

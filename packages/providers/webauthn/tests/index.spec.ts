@@ -1,6 +1,7 @@
 import { Context } from 'cordis'
 import Database from '@cordisjs/plugin-database'
 import MemoryDriver from '@cordisjs/plugin-database-memory'
+import Server from '@cordisjs/plugin-server'
 import Timer from '@cordisjs/plugin-timer'
 import Sso from '@cordisjs/plugin-sso'
 import { expect } from 'chai'
@@ -11,11 +12,16 @@ import WebAuthnProvider, { Config } from '../src'
 const ORIGIN = 'https://example.com'
 const RP_ID = 'example.com'
 
+let portCursor = 32100
+
 async function setup(extra: Partial<Config> = {}) {
   const ctx = new Context()
   await ctx.plugin(Database)
   await ctx.plugin(MemoryDriver)
   await ctx.plugin(Timer)
+  // Server is required by the provider (used for default-value derivation of
+  // origin/rpId); tests override those explicitly so the port doesn't matter.
+  await ctx.plugin(Server, { host: '127.0.0.1', port: portCursor++, maxPort: 39999 })
   await ctx.plugin(Sso)
   await ctx.plugin(WebAuthnProvider, {
     rpName: 'TestRP',
@@ -115,6 +121,30 @@ describe('@cordisjs/plugin-sso-webauthn', () => {
       const [after] = await ctx.database.get('sso.webauthn' as any, { credentialId })
       expect(after.signCount).to.be.greaterThan(before.signCount)
       expect(after.lastUsedAt).to.be.instanceOf(Date)
+    })
+
+    it('authenticate() returns the identityId on a valid assertion', async () => {
+      // Passwordless-login path: /sso/sessions/:provider/finish calls this.
+      const provider: any = ctx.sso.getProvider('webauthn')!
+      const { challengeId, data: options } = await provider.challenge({ userId }) as any
+      const assertion = emulator.getJSON(ORIGIN, options)
+      const result = await provider.authenticate(challengeId, JSON.stringify(assertion))
+      expect(result).to.deep.equal({ identityId })
+    })
+
+    it('authenticate() returns null for an unknown credential', async () => {
+      const provider: any = ctx.sso.getProvider('webauthn')!
+      const { challengeId } = await provider.challenge({ userId }) as any
+      const result = await provider.authenticate(challengeId, JSON.stringify({ id: 'no-such-credential' }))
+      expect(result).to.be.null
+    })
+
+    it('authenticate() returns null for a register-type challenge', async () => {
+      // Crossing the streams: register-type challenge shouldn't authenticate.
+      const provider: any = ctx.sso.getProvider('webauthn')!
+      const { challengeId } = await provider.challenge({ userId, type: 'register' }) as any
+      const result = await provider.authenticate(challengeId, '{}')
+      expect(result).to.be.null
     })
 
     it('does not expose resolve (passwordless login must go through challenge+verify)', async () => {

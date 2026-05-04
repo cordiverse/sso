@@ -46,6 +46,22 @@ class OAuthFakeProvider extends SsoProvider {
   async register() { return {} }
 }
 
+// Stand-in for webauthn at the route-integration level. Avoids pulling the
+// whole authenticator emulator stack into the server spec.
+class FakeWebauthnProvider extends SsoProvider {
+  name = 'fake-webauthn'
+  type = 'webauthn' as const
+  interactive = true
+  autoRegister = false
+  public targetIdentityId: number | null = null
+  async authenticate(challengeId: string, response: string) {
+    if (this.targetIdentityId && challengeId === 'valid-ch' && response === 'valid-resp') {
+      return { identityId: this.targetIdentityId }
+    }
+    return null
+  }
+}
+
 let portCursor = 31000
 
 const mailbox: { email: string; code: string }[] = []
@@ -342,6 +358,61 @@ describe('@cordisjs/plugin-sso-server', () => {
     })
   })
 
+  describe('POST /sso/sessions/:provider/finish', () => {
+    it('returns 400 when the provider has no authenticate()', async () => {
+      ({ ctx, baseUrl } = await setup())
+      const res = await fetch(`${baseUrl}/sso/sessions/password/finish`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ challengeId: 'x', response: 'y' }),
+      })
+      expect(res.status).to.equal(400)
+      expect(await res.json()).to.deep.equal({ error: 'AUTHENTICATE_NOT_SUPPORTED' })
+    })
+
+    it('returns 404 for unknown provider', async () => {
+      ({ ctx, baseUrl } = await setup())
+      const res = await fetch(`${baseUrl}/sso/sessions/nope/finish`, {
+        method: 'POST', body: '{}',
+      })
+      expect(res.status).to.equal(404)
+    })
+
+    it('mints a session when authenticate() returns an identityId', async () => {
+      ({ ctx, baseUrl } = await setup())
+      await ctx.plugin(FakeWebauthnProvider)
+      await sleep()
+      const fake = ctx.sso.getProvider('fake-webauthn') as any as FakeWebauthnProvider
+      const { user, identityId } = await ctx.sso.createUser('fake-webauthn')
+      fake.targetIdentityId = identityId
+
+      const res = await fetch(`${baseUrl}/sso/sessions/fake-webauthn/finish`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ challengeId: 'valid-ch', response: 'valid-resp' }),
+      })
+      expect(res.status).to.equal(200)
+      const body = await res.json() as any
+      expect(body.token).to.be.a('string')
+      expect(body.userId).to.equal(user.id)
+      const validated = await ctx.sso.validateSession(body.token)
+      expect(validated?.id).to.equal(user.id)
+    })
+
+    it('returns 401 when authenticate() returns null', async () => {
+      ({ ctx, baseUrl } = await setup())
+      await ctx.plugin(FakeWebauthnProvider)
+      await sleep()
+      const res = await fetch(`${baseUrl}/sso/sessions/fake-webauthn/finish`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ challengeId: 'nope', response: 'nope' }),
+      })
+      expect(res.status).to.equal(401)
+      expect(await res.json()).to.deep.equal({ error: 'VERIFICATION_FAILED' })
+    })
+  })
+
   describe('GET /sso/oauth-url/:provider', () => {
     it('returns 400 OAUTH_NOT_SUPPORTED for providers without getAuthUrl', async () => {
       ({ ctx, baseUrl } = await setup())
@@ -559,6 +630,36 @@ describe('@cordisjs/plugin-sso-server', () => {
       const remaining = await ctx.sso.getIdentities(user.id)
       expect(remaining).to.have.length(1)
       expect(remaining[0].provider).to.equal('password')
+    })
+
+    it('DELETE /sso/identities/:id cascades to the provider row and active sessions', async () => {
+      // Regression: deleting an sso.identity row that's still referenced by
+      // sso.password / sso.session violates FK constraints on real DBs. The
+      // unlink path has to wipe those first. Users mid-session via the
+      // deleted identity get booted.
+      ({ ctx, baseUrl } = await setup())
+      const { user, identityId: pwdIdentityId } = await registerPasswordUser(ctx, 'alice', 'longenough')
+      const { identityId: mailIdentityId } = await ctx.sso.link(user.id, 'mail')
+      const token = await loginAndGetToken(baseUrl, 'alice', 'longenough')
+      // Sanity: password row and session row both exist.
+      expect(await ctx.database.get('sso.password' as any, { identityId: pwdIdentityId })).to.have.length(1)
+      expect(await ctx.database.get('sso.session' as any, { identityId: pwdIdentityId })).to.have.length(1)
+
+      const res = await fetch(`${baseUrl}/sso/identities/${pwdIdentityId}`, {
+        method: 'DELETE',
+        headers: { authorization: `Bearer ${token}` },
+      })
+      expect(res.status).to.equal(200)
+
+      // identity + provider row + session all gone
+      expect(await ctx.database.get('sso.identity', { id: pwdIdentityId })).to.have.length(0)
+      expect(await ctx.database.get('sso.password' as any, { identityId: pwdIdentityId })).to.have.length(0)
+      expect(await ctx.database.get('sso.session' as any, { identityId: pwdIdentityId })).to.have.length(0)
+      // Leftover identity is still there (we had two).
+      const remaining = await ctx.sso.getIdentities(user.id)
+      expect(remaining.map(i => i.id)).to.deep.equal([mailIdentityId])
+      // The token minted via the deleted identity is no longer valid.
+      expect(await ctx.sso.validateSession(token)).to.be.null
     })
 
     it('DELETE /sso/sessions invalidates the token', async () => {

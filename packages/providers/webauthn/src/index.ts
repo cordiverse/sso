@@ -11,6 +11,7 @@ import {
 } from '@simplewebauthn/server'
 import { SsoProvider } from '@cordisjs/plugin-sso'
 import type { Database } from '@cordisjs/plugin-database'
+import type {} from '@cordisjs/plugin-server'
 import type {} from '@cordisjs/plugin-timer'
 
 declare module '@cordisjs/plugin-database' {
@@ -33,17 +34,23 @@ export interface SsoWebAuthn {
 }
 
 export interface Config {
-  rpName: string
-  rpId: string
-  origin: string
-  timeout?: number
+  // All three default to values derived from ctx.server.baseUrl. Set
+  // explicitly only when you need to override — most commonly when the
+  // server sits behind a reverse proxy AND ctx.server.config.baseUrl isn't
+  // already set, OR when you want rpId to be a parent domain for cross-
+  // subdomain passkey sharing.
+  rpName?: string  // app name shown in the OS passkey picker; default 'Cordis'
+  rpId?: string    // registrable suffix of the server's origin, derived from baseUrl by default
+  origin?: string  // full scheme://host[:port] of the server, derived from baseUrl by default
+  timeout?: number // challenge TTL in ms; default 60000
 }
 
+@Inject('server')
 @Inject('timer')
 export default class WebAuthnProvider extends SsoProvider {
   name = 'webauthn'
   type = 'webauthn' as const
-  interactive = false
+  interactive = true
   autoRegister = false
 
   private challenges = new Map<string, PendingChallenge>()
@@ -52,11 +59,28 @@ export default class WebAuthnProvider extends SsoProvider {
   private origin: string
   private timeout: number
 
-  constructor(ctx: Context, config: Config) {
+  constructor(ctx: Context, config: Config = {}) {
     super(ctx)
-    this.rpName = config.rpName
-    this.rpId = config.rpId
-    this.origin = config.origin
+    // Derive defaults from ctx.server.baseUrl. baseUrl already respects
+    // server.config.baseUrl (explicitly configured public URL behind a
+    // proxy) and any intercept path prefix, so it's the right source of
+    // truth for "what URL will the browser actually use".
+    //
+    // Quirk: when the server binds to 0.0.0.0 / :: (default), baseUrl
+    // resolves to 127.0.0.1:PORT. Browsers in local dev almost always use
+    // the 'localhost' alias, and WebAuthn's rpId check is a strict string
+    // match against the browser's hostname — so fall back to 'localhost'
+    // for loopback addresses. If the user actually accesses via 127.0.0.1
+    // (or a LAN IP), they need to set `origin` + `rpId` explicitly.
+    const base = new URL(ctx.server.baseUrl)
+    let hostname = base.hostname
+    if (hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]') {
+      hostname = 'localhost'
+    }
+    const port = base.port ? `:${base.port}` : ''
+    this.rpName = config.rpName ?? 'Cordis'
+    this.rpId = config.rpId ?? hostname
+    this.origin = config.origin ?? `${base.protocol}//${hostname}${port}`
     this.timeout = config.timeout ?? 60000
 
     ctx.database.extend('sso.webauthn', {
@@ -91,18 +115,30 @@ export default class WebAuthnProvider extends SsoProvider {
   }
 
   async challenge(target: any) {
-    const { userId, type = 'authenticate' } = target
+    const { userId, type = 'authenticate', userName, userDisplayName } = target
     const challengeId = randomBytes(16).toString('hex')
 
     if (type === 'register') {
+      // userName is what the user would type at a login prompt (username /
+      // email); userDisplayName is the human-readable label shown in the OS
+      // passkey manager. Callers that know better should pass both; we fall
+      // back to a placeholder so the credential is still distinguishable.
+      const name = userName ?? `user-${userId}`
+      // Tell the browser which authenticators the user has already bound, so
+      // the OS rejects / warns on duplicate registration from the same
+      // device. Without this, repeated clicks silently produce new identity
+      // rows for the same physical passkey.
+      const existing = userId ? await this.getCredentialsForUser(userId) : []
       const options = await generateRegistrationOptions({
         rpName: this.rpName,
         rpID: this.rpId,
         userID: Buffer.from(String(userId)),
-        userName: `user-${userId}`,
+        userName: name,
+        userDisplayName: userDisplayName ?? name,
         timeout: this.timeout,
         attestationType: 'none',
         authenticatorSelection: { userVerification: 'preferred' },
+        excludeCredentials: existing.map(c => ({ id: c.id, transports: c.transports })),
       })
       this.challenges.set(challengeId, {
         challenge: options.challenge,
@@ -137,10 +173,10 @@ export default class WebAuthnProvider extends SsoProvider {
       this.challenges.delete(challengeId)
       return false
     }
-    this.challenges.delete(challengeId)
-    const body = JSON.parse(response)
 
     if (pending.type === 'register') {
+      this.challenges.delete(challengeId)
+      const body = JSON.parse(response)
       try {
         const verification = await verifyRegistrationResponse({
           response: body as RegistrationResponseJSON,
@@ -177,10 +213,30 @@ export default class WebAuthnProvider extends SsoProvider {
       } catch { return false }
     }
 
+    // authenticate branch delegates to the shared implementation below.
+    return !!(await this.authenticate(challengeId, response))
+  }
+
+  // Public method used by POST /sso/sessions/:provider/finish for passwordless
+  // login. Returns identityId on success so the session endpoint can mint a
+  // token; returns null for every failure mode (unknown challenge, wrong type,
+  // signature mismatch, unknown credential). Shares the challenge store with
+  // verify(): the first of {verify, authenticate} wins; subsequent calls see
+  // the challenge already deleted.
+  async authenticate(challengeId: string, response: string): Promise<{ identityId: number } | null> {
+    const pending = this.challenges.get(challengeId)
+    if (!pending || Date.now() > pending.expiresAt) {
+      this.challenges.delete(challengeId)
+      return null
+    }
+    if (pending.type !== 'authenticate') return null
+    this.challenges.delete(challengeId)
+
     try {
+      const body = JSON.parse(response)
       const credentialId = body.id
       const [record] = await this.ctx.database.get('sso.webauthn', { credentialId })
-      if (!record) return false
+      if (!record) return null
       const credential: WebAuthnCredential = {
         id: record.credentialId,
         publicKey: Buffer.from(record.publicKey, 'base64'),
@@ -194,13 +250,13 @@ export default class WebAuthnProvider extends SsoProvider {
         expectedRPID: this.rpId,
         credential,
       })
-      if (!verification.verified) return false
+      if (!verification.verified) return null
       await this.ctx.database.set('sso.webauthn', { credentialId }, {
         signCount: verification.authenticationInfo.newCounter,
         lastUsedAt: new Date(),
       })
-      return true
-    } catch { return false }
+      return { identityId: record.identityId }
+    } catch { return null }
   }
 
   // resolve is intentionally not implemented. The old version looked up

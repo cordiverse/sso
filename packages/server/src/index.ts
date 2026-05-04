@@ -43,6 +43,25 @@ export function apply(ctx: Context) {
     return Response.json({ ok: true })
   })
 
+  // Challenge-based login finish. The client first calls /sso/challenge/:provider
+  // to get a challengeId + options, runs the provider-specific ceremony
+  // (WebAuthn signs, etc.), and POSTs the result here to exchange for a
+  // session token. Currently only webauthn implements provider.authenticate.
+  ctx.server.post('/sso/sessions/:provider/finish', async (req) => {
+    const provider = ctx.sso.getProvider(req.params.provider)
+    if (!provider) return errorResponse(404, 'PROVIDER_NOT_FOUND')
+    if (!provider.authenticate) return errorResponse(400, 'AUTHENTICATE_NOT_SUPPORTED')
+    const body = await safeJson(req)
+    const { challengeId, response } = body
+    if (!challengeId || response === undefined) return errorResponse(400, 'INVALID_REQUEST')
+    const result = await provider.authenticate(challengeId, response)
+    if (!result) return errorResponse(401, 'VERIFICATION_FAILED')
+    const identity = await ctx.sso.getIdentity(result.identityId)
+    if (!identity) return errorResponse(500, 'IDENTITY_NOT_FOUND')
+    const token = await ctx.sso.createSession(identity.userId, identity.id)
+    return Response.json({ token, userId: identity.userId })
+  })
+
   // Create a new user (= register)
   ctx.server.post('/sso/users/:provider', async (req) => {
     const provider = ctx.sso.getProvider(req.params.provider)
