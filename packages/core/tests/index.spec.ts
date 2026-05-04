@@ -239,4 +239,75 @@ describe('@cordisjs/plugin-sso', () => {
       expect((await ctx.sso.getProviderMetas())[0]).not.to.have.property('extra')
     })
   })
+
+  describe('findUserByIdentifier', () => {
+    let ctx: Context
+
+    beforeEach(async () => {
+      ctx = await setup()
+    })
+
+    it('hits sso.user.name first, bypassing providers entirely', async () => {
+      const { user } = await ctx.sso.createUser('x')
+      await ctx.database.set('sso.user', { id: user.id }, { name: 'alice' })
+      // No provider implements resolveUser here; finding succeeds purely
+      // via the sso.user.name canonical handle.
+      expect(await ctx.sso.findUserByIdentifier('alice')).to.deep.equal([user.id])
+    })
+
+    it('falls through to provider.resolveUser when no sso.user matches', async () => {
+      const { user } = await ctx.sso.createUser('x')
+      class Hooked extends SsoProvider {
+        name = 'hooked'
+        type = 'credentials' as const
+        interactive = false
+        autoRegister = false
+        async resolveUser(identifier: string) {
+          return identifier === 'by-provider' ? user.id : null
+        }
+      }
+      await ctx.plugin(Hooked)
+      await sleep()
+      expect(await ctx.sso.findUserByIdentifier('by-provider')).to.deep.equal([user.id])
+      expect(await ctx.sso.findUserByIdentifier('no-such-thing')).to.deep.equal([])
+    })
+
+    it('returns every distinct match when an identifier hits multiple layers', async () => {
+      const { user: a } = await ctx.sso.createUser('x')
+      const { user: b } = await ctx.sso.createUser('x')
+      // User A picked a handle that looks like an email.
+      await ctx.database.set('sso.user', { id: a.id }, { name: 'alice@foo.com' })
+      class MailLike extends SsoProvider {
+        name = 'mail-like'
+        type = 'credentials' as const
+        interactive = false
+        autoRegister = false
+        async resolveUser(identifier: string) {
+          return identifier === 'alice@foo.com' ? b.id : null
+        }
+      }
+      await ctx.plugin(MailLike)
+      await sleep()
+      const hits = await ctx.sso.findUserByIdentifier('alice@foo.com')
+      expect(hits).to.include.members([a.id, b.id])
+      expect(hits).to.have.length(2)
+    })
+
+    it('deduplicates when sso.user.name and a provider both point at the same user', async () => {
+      const { user } = await ctx.sso.createUser('x')
+      await ctx.database.set('sso.user', { id: user.id }, { name: 'alice' })
+      class Echo extends SsoProvider {
+        name = 'echo'
+        type = 'credentials' as const
+        interactive = false
+        autoRegister = false
+        async resolveUser(identifier: string) {
+          return identifier === 'alice' ? user.id : null
+        }
+      }
+      await ctx.plugin(Echo)
+      await sleep()
+      expect(await ctx.sso.findUserByIdentifier('alice')).to.deep.equal([user.id])
+    })
+  })
 })

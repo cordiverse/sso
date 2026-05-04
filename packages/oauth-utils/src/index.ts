@@ -229,9 +229,14 @@ export async function handleOAuthCallback(options: {
   linkUserId?: number
   resolveResult: { identityId: number } | null
   registerFn: (identityId: number, db: Database) => Promise<void>
+  // Human-readable hint used as the initial value for sso.user.display on
+  // first registration. For link-to-existing-user, only written if the
+  // target user has no display yet (so connecting a new OAuth provider
+  // doesn't clobber a handle the user already picked).
+  display?: string
   redirectUrl?: string
 }): Promise<Response> {
-  const { ctx, providerName, autoRegister, linkUserId, resolveResult, registerFn, redirectUrl } = options
+  const { ctx, providerName, autoRegister, linkUserId, resolveResult, registerFn, display, redirectUrl } = options
 
   // Link intent — attach to the logged-in user.
   if (linkUserId) {
@@ -249,6 +254,12 @@ export async function handleOAuthCallback(options: {
     const identityId = await ctx.database.transact(async (db) => {
       const linked = await ctx.sso.link(linkUserId, providerName, db)
       await registerFn(linked.identityId, db)
+      if (display) {
+        const [owner] = await db.get('sso.user', { id: linkUserId })
+        if (owner && !owner.display) {
+          await db.set('sso.user', { id: linkUserId }, { display })
+        }
+      }
       return linked.identityId
     })
     const token = await ctx.sso.createSession(linkUserId, identityId)
@@ -265,7 +276,7 @@ export async function handleOAuthCallback(options: {
   // Auto-register path.
   if (autoRegister) {
     const result = await ctx.database.transact(async (db) => {
-      const { user, identityId } = await ctx.sso.createUser(providerName, db)
+      const { user, identityId } = await ctx.sso.createUser(providerName, db, { display })
       await registerFn(identityId, db)
       return { userId: user.id, identityId }
     })

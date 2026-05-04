@@ -26,17 +26,30 @@ describe('@cordisjs/plugin-sso-password', () => {
       ctx = await setup()
     })
 
-    it('hashes the password and stores a salt', async () => {
-      const { identityId } = await ctx.sso.createUser('password')
+    it('hashes the password, stores a salt, and sets sso.user.name + display', async () => {
+      const { user, identityId } = await ctx.sso.createUser('password')
       const provider = ctx.sso.getProvider('password')!
       await provider.register!({ identityId, username: 'alice', password: 'longenough' })
-      const [row] = await ctx.database.get('sso.password' as any, { username: 'alice' })
+      const [row] = await ctx.database.get('sso.password' as any, { identityId })
       expect(row).to.exist
-      expect(row.username).to.equal('alice')
       expect(row.hash).not.to.equal('longenough')
       expect(row.hash).to.match(/^[0-9a-f]+$/)
       expect(row.salt).to.have.length(32)
       expect(row.identityId).to.equal(identityId)
+      // The username lives on sso.user now, not in the password row.
+      const [updated] = await ctx.database.get('sso.user', { id: user.id })
+      expect(updated.name).to.equal('alice')
+      // display seeded from username on first-time register.
+      expect(updated.display).to.equal('alice')
+    })
+
+    it('does not overwrite an existing sso.user.display', async () => {
+      const { user, identityId } = await ctx.sso.createUser('password', undefined, { display: 'Pre-Set' })
+      const provider = ctx.sso.getProvider('password')!
+      await provider.register!({ identityId, username: 'alice', password: 'longenough' })
+      const [updated] = await ctx.database.get('sso.user', { id: user.id })
+      expect(updated.display).to.equal('Pre-Set')
+      expect(updated.name).to.equal('alice')
     })
 
     it('rejects passwords shorter than minLength', async () => {
@@ -117,6 +130,30 @@ describe('@cordisjs/plugin-sso-password', () => {
       expect(await provider.resolve!({ username: 'alice' })).to.be.null
       expect(await provider.resolve!({ password: 'longenough' })).to.be.null
     })
+
+    it('throws on ambiguous identifier (invariant violation)', async () => {
+      // Arrange a collision: another user's resolveUser also claims "alice".
+      const { user: other } = await ctx.sso.createUser('x')
+      class Collider extends (await import('@cordisjs/plugin-sso')).SsoProvider {
+        name = 'collider'
+        type = 'credentials' as const
+        interactive = false
+        autoRegister = false
+        async resolveUser(identifier: string) {
+          return identifier === 'alice' ? other.id : null
+        }
+      }
+      await ctx.plugin(Collider as any)
+      // Give the plugin a tick to register.
+      await new Promise(r => setTimeout(r, 0))
+      const provider = ctx.sso.getProvider('password')!
+      let err: Error | undefined
+      try {
+        await provider.resolve!({ username: 'alice', password: 'longenough' })
+      } catch (e) { err = e as Error }
+      expect(err).to.exist
+      expect(err!.message).to.match(/ambiguous/i)
+    })
   })
 
   describe('algorithm config', () => {
@@ -125,7 +162,7 @@ describe('@cordisjs/plugin-sso-password', () => {
       const { identityId } = await ctx.sso.createUser('password')
       const provider = ctx.sso.getProvider('password')!
       await provider.register!({ identityId, username: 'alice', password: 'longenough' })
-      const [row] = await ctx.database.get('sso.password' as any, { username: 'alice' })
+      const [row] = await ctx.database.get('sso.password' as any, { identityId })
       expect(row.hash).to.have.length(128) // 512 bits = 64 bytes = 128 hex
     })
   })

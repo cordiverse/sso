@@ -116,6 +116,7 @@ export default class AppleProvider extends SsoProvider {
           autoRegister: this.autoRegister,
           linkUserId,
           resolveResult,
+          display: displayName,
           registerFn: async (identityId, db) => {
             await db.create('sso.apple', {
               identityId,

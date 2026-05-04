@@ -100,6 +100,7 @@ export default class QqProvider extends SsoProvider {
           autoRegister: this.autoRegister,
           linkUserId,
           resolveResult,
+          display: userInfo.nickname,
           registerFn: async (identityId, db) => {
             await db.create('sso.qq', {
               identityId,

@@ -143,9 +143,27 @@ export default class SmsProvider extends SsoProvider {
     const [existing] = await db.get('sso.sms', { phone })
     if (existing) throw new Error('phone already registered')
     await db.create('sso.sms', { identityId, phone, verified: true })
+    // Seed sso.user.display with the phone number if nothing's there yet.
+    const [identity] = await db.get('sso.identity', { id: identityId })
+    if (identity) {
+      const [owner] = await db.get('sso.user', { id: identity.userId })
+      if (owner && !owner.display) {
+        await db.set('sso.user', { id: identity.userId }, { display: String(phone) })
+      }
+    }
   }
 
   async unlink(identityId: number, db: Database = this.ctx.database) {
     await db.remove('sso.sms', { identityId })
+  }
+
+  async resolveUser(identifier: string): Promise<number | null> {
+    // Cheap prefilter — skip DB when the string isn't shaped like a phone
+    // number (digits, optional leading + and spaces/dashes/parens).
+    if (!/^\+?[\d\s\-()]{6,}$/.test(identifier)) return null
+    const [row] = await this.ctx.database.get('sso.sms', { phone: identifier })
+    if (!row) return null
+    const identity = await this.ctx.sso.getIdentity(row.identityId)
+    return identity?.userId ?? null
   }
 }

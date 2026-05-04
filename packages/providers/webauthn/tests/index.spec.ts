@@ -146,6 +146,73 @@ describe('@cordisjs/plugin-sso-webauthn', () => {
       const result = await provider.authenticate(challengeId, '{}')
       expect(result).to.be.null
     })
+  })
+
+  describe('identifier-first challenge', () => {
+    let ctx: Context
+    let userId: number
+
+    beforeEach(async () => {
+      // setup() doesn't plug password; do our own mini stack that has a
+      // resolveUser-capable provider so findUserByIdentifier has something
+      // to hit.
+      ctx = new Context()
+      await ctx.plugin(Database)
+      await ctx.plugin(MemoryDriver)
+      await ctx.plugin(Timer)
+      await ctx.plugin(Server, { host: '127.0.0.1', port: portCursor++, maxPort: 39999 })
+      await ctx.plugin(Sso)
+      await ctx.plugin(WebAuthnProvider, {
+        rpName: 'TestRP', rpId: RP_ID, origin: ORIGIN, timeout: 60_000,
+      })
+      // A cheap stand-in for a password-like provider with a resolveUser hook.
+      const fakeProvider = {
+        name: 'fake-pwd',
+        type: 'credentials' as const,
+        interactive: true,
+        autoRegister: false,
+        async resolveUser(identifier: string) {
+          return identifier === 'alice' ? userId : null
+        },
+      }
+      ctx.sso.register(fakeProvider as any)
+      const created = await ctx.sso.createUser('webauthn')
+      userId = created.user.id
+      const provider: any = ctx.sso.getProvider('webauthn')!
+      const { challengeId, data: options } = await provider.challenge({
+        userId, type: 'register',
+      }) as any
+      const emulator = new WebAuthnEmulator()
+      const attestation = emulator.createJSON(ORIGIN, options)
+      await provider.verify(challengeId, JSON.stringify(attestation))
+    })
+
+    it('narrows allowCredentials to the hinted user', async () => {
+      const provider: any = ctx.sso.getProvider('webauthn')!
+      const { data: options } = await provider.challenge({
+        type: 'authenticate',
+        hint: 'alice',
+      }) as any
+      expect(options.allowCredentials).to.have.length(1)
+    })
+
+    it('falls back to discoverable flow when the hint matches nobody', async () => {
+      const provider: any = ctx.sso.getProvider('webauthn')!
+      const { data: options } = await provider.challenge({
+        type: 'authenticate',
+        hint: 'bob',
+      }) as any
+      // No match = empty allowCredentials = browser picks any passkey
+      expect(options.allowCredentials ?? []).to.deep.equal([])
+    })
+
+    it('keeps discoverable flow when no hint is given', async () => {
+      const provider: any = ctx.sso.getProvider('webauthn')!
+      const { data: options } = await provider.challenge({
+        type: 'authenticate',
+      }) as any
+      expect(options.allowCredentials ?? []).to.deep.equal([])
+    })
 
     it('does not expose resolve (passwordless login must go through challenge+verify)', async () => {
       const provider = ctx.sso.getProvider('webauthn')!

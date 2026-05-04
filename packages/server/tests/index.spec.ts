@@ -210,7 +210,12 @@ describe('@cordisjs/plugin-sso-server', () => {
       const body = await res.json() as any
       expect(body.token).to.be.a('string')
       expect(body.userId).to.be.a('number')
-      const [row] = await ctx.database.get('sso.password' as any, { username: 'bob' })
+      // sso.user now owns the name; password table only holds the hash.
+      const [user] = await ctx.database.get('sso.user', { name: 'bob' })
+      expect(user).to.exist
+      const [identity] = await ctx.database.get('sso.identity', { userId: user!.id, provider: 'password' })
+      expect(identity).to.exist
+      const [row] = await ctx.database.get('sso.password' as any, { identityId: identity!.id })
       expect(row).to.exist
     })
 

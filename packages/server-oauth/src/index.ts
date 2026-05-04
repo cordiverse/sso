@@ -288,7 +288,12 @@ export function apply(ctx: Context, config: Config = {}) {
 
     return Response.json({
       sub: String(user.id),
-      name: user.name,
+      // OIDC-wise, `name` is meant to be the human-readable full name and
+      // `preferred_username` is the short login handle. We map them to our
+      // split: sso.user.display → name (fallback to the handle), and
+      // sso.user.name → preferred_username.
+      name: user.display ?? user.name,
+      preferred_username: user.name,
       updated_at: user.updatedAt ? Math.floor(user.updatedAt.getTime() / 1000) : undefined,
     })
   })

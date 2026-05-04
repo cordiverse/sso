@@ -95,6 +95,7 @@ export default class TwitterProvider extends SsoProvider {
           autoRegister: this.autoRegister,
           linkUserId,
           resolveResult,
+          display: user.name || user.username,
           registerFn: async (identityId, db) => {
             await db.create('sso.twitter', {
               identityId,

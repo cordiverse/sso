@@ -133,9 +133,29 @@ export default class MailProvider extends SsoProvider {
     const [existing] = await db.get('sso.mail', { email })
     if (existing) throw new Error('email already registered')
     await db.create('sso.mail', { identityId, email, verified: true })
+    // Seed sso.user.display with the email's local part if nothing's there
+    // yet. Doesn't touch an already-populated display.
+    const [identity] = await db.get('sso.identity', { id: identityId })
+    if (identity) {
+      const [owner] = await db.get('sso.user', { id: identity.userId })
+      if (owner && !owner.display) {
+        const localPart = String(email).split('@')[0]
+        if (localPart) await db.set('sso.user', { id: identity.userId }, { display: localPart })
+      }
+    }
   }
 
   async unlink(identityId: number, db: Database = this.ctx.database) {
     await db.remove('sso.mail', { identityId })
+  }
+
+  async resolveUser(identifier: string): Promise<number | null> {
+    // Cheap prefilter — the canonical findUserByIdentifier path hits every
+    // provider, so skip the DB when the string obviously isn't an email.
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier)) return null
+    const [row] = await this.ctx.database.get('sso.mail', { email: identifier })
+    if (!row) return null
+    const identity = await this.ctx.sso.getIdentity(row.identityId)
+    return identity?.userId ?? null
   }
 }

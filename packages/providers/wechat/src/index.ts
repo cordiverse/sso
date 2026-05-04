@@ -97,6 +97,7 @@ export default class WeChatProvider extends SsoProvider {
           autoRegister: this.autoRegister,
           linkUserId,
           resolveResult,
+          display: userInfo.nickname,
           registerFn: async (identityId, db) => {
             await db.create('sso.wechat', {
               identityId,

@@ -375,6 +375,7 @@ export default class OAuthProvider extends SsoProvider {
           autoRegister: this.autoRegister,
           linkUserId,
           resolveResult,
+          display: userInfo.displayName,
           registerFn: async (identityId, db) => {
             await db.create('sso.oauth', {
               identityId,

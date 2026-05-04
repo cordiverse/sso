@@ -115,7 +115,27 @@ export default class WebAuthnProvider extends SsoProvider {
   }
 
   async challenge(target: any) {
-    const { userId, type = 'authenticate', userName, userDisplayName } = target
+    const { type = 'authenticate', userName, userDisplayName, hint } = target
+    let { userId } = target
+    // Credentials to narrow the authenticate ceremony by. If we get ≥1
+    // userId (either explicit or via hint), concat their credentials. If 0,
+    // allowCredentials stays empty and the browser shows all passkeys —
+    // discoverable-credential flow. Ambiguous hints fall under the ≥1 case
+    // automatically (user picks their own passkey from the OS picker).
+    let authCredentials: WebAuthnCredential[] = []
+    if (type === 'authenticate') {
+      const userIds: number[] = userId
+        ? [userId]
+        : hint
+          ? await this.ctx.sso.findUserByIdentifier(hint)
+          : []
+      for (const id of userIds) {
+        authCredentials = authCredentials.concat(await this.getCredentialsForUser(id))
+      }
+      // Keep pending.userId set when there was exactly one match, so later
+      // per-user logic (if any) can use it. Not strictly needed today.
+      if (!userId && userIds.length === 1) userId = userIds[0]
+    }
     const challengeId = randomBytes(16).toString('hex')
 
     if (type === 'register') {
@@ -150,11 +170,10 @@ export default class WebAuthnProvider extends SsoProvider {
       return { challengeId, data: options }
     }
 
-    const credentials = userId ? await this.getCredentialsForUser(userId) : []
     const options = await generateAuthenticationOptions({
       rpID: this.rpId,
       timeout: this.timeout,
-      allowCredentials: credentials.map(c => ({ id: c.id, transports: c.transports })),
+      allowCredentials: authCredentials.map(c => ({ id: c.id, transports: c.transports })),
       userVerification: 'preferred',
     })
     this.challenges.set(challengeId, {

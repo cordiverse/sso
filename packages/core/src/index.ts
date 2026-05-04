@@ -44,6 +44,13 @@ export abstract class SsoProvider {
   // the same transaction as the identity+session cleanup, so throwing here
   // rolls back the whole unlink.
   unlink?(identityId: number, db?: Database): Promise<void>
+  // Map a human-typed login identifier (username / email / phone) to the
+  // owning userId. Optional — only providers whose identities are keyed by
+  // something a user would type (password, mail, sms) implement this.
+  // Used by webauthn's identifier-first challenge path to narrow
+  // allowCredentials to one user's passkeys; never consulted as a security
+  // gate, so returning null when the identifier isn't recognised is fine.
+  resolveUser?(identifier: string): Promise<number | null>
   getAuthUrl?(redirectUri: string, state: string, link?: { userId: number }): string
   challenge?(target: any): Promise<{ challengeId: string }>
   verify?(challengeId: string, response: string): Promise<boolean>
@@ -56,6 +63,7 @@ export abstract class SsoProvider {
 export interface User {
   id: number
   name?: string
+  display?: string
   createdAt: Date
   updatedAt: Date
 }
@@ -129,10 +137,25 @@ export class Sso extends Service {
 
     ctx.database.extend('sso.user', {
       id: 'unsigned(8)',
+      // name is the globally unique, user-facing login identifier ("@alice"
+      // style). Providers that expose a typed-identifier login (password's
+      // "username", mail's "email", sms's "phone") may also be used as
+      // hints, but name is THE canonical account-level identifier — it
+      // survives provider unlinks and is what webauthn / future identifier-
+      // first flows narrow credentials by. Nullable to allow OAuth-only
+      // accounts that never picked a handle; SQL allows multiple NULLs
+      // under a unique constraint.
       name: 'string(255)',
+      // display is the human-readable label shown on profile pages, in
+      // OIDC `name`, and in OS passkey managers (via webauthn's
+      // userDisplayName). Not unique — two people can both be "Alice".
+      // Populated by the registering provider with a sensible initial
+      // guess (username for password, email local-part for mail, nickname
+      // for OAuth, etc.), and editable by the user afterwards.
+      display: 'string(255)',
       createdAt: 'timestamp',
       updatedAt: 'timestamp',
-    }, { autoInc: true })
+    }, { autoInc: true, unique: [['name']] })
 
     ctx.database.extend('sso.identity', {
       id: 'unsigned(8)',
@@ -187,9 +210,10 @@ export class Sso extends Service {
     return this.ctx.waterfall('sso/provider-meta', base, () => base)
   }
 
-  async createUser(provider: string, db: Database = this.ctx.database): Promise<{ user: User; identityId: number }> {
+  async createUser(provider: string, db: Database = this.ctx.database, opts: { display?: string } = {}): Promise<{ user: User; identityId: number }> {
     const now = new Date()
     const user = await db.create('sso.user', {
+      display: opts.display,
       createdAt: now,
       updatedAt: now,
     })
@@ -247,6 +271,30 @@ export class Sso extends Service {
   async getIdentity(identityId: number): Promise<Identity | null> {
     const [identity] = await this.ctx.database.get('sso.identity', { id: identityId })
     return identity ?? null
+  }
+
+  // Iterate all providers' resolveUser hooks and return every matching
+  // userId (deduplicated). Used by identifier-first flows (currently
+  // webauthn) where a client-typed hint needs to be mapped to users without
+  // committing to a specific provider upfront.
+  //
+  // Lookup order: sso.user.name (canonical account handle) first, then any
+  // provider that implements resolveUser (e.g. mail's email, sms's phone).
+  // Collisions ARE possible (e.g. one user's handle is "alice@foo.com",
+  // another user's mail is "alice@foo.com"). We return all of them and let
+  // callers decide the semantic — most pass ≥1 matches straight through
+  // (webauthn concats allowCredentials); a few treat >1 as a server-state
+  // error (password.resolve throws because it can't meaningfully check a
+  // password against multiple accounts at once).
+  async findUserByIdentifier(identifier: string): Promise<number[]> {
+    const seen = new Set<number>()
+    const [nameHit] = await this.ctx.database.get('sso.user', { name: identifier })
+    if (nameHit) seen.add(nameHit.id)
+    for (const provider of this._providers.values()) {
+      const userId = await provider.resolveUser?.(identifier)
+      if (userId) seen.add(userId)
+    }
+    return [...seen]
   }
 
   async createSession(userId: number, identityId: number, db: Database = this.ctx.database): Promise<string> {
