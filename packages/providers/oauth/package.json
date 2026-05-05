@@ -22,6 +22,7 @@
   "peerDependencies": {
     "@cordisjs/oauth-utils": "^0.1.0",
     "@cordisjs/plugin-database": "^4.0.1",
+    "@cordisjs/plugin-logger": "^1.0.2",
     "@cordisjs/plugin-server": "^1.6.1",
     "@cordisjs/plugin-sso": "^0.1.0",
     "@cordisjs/plugin-timer": "^1.1.1",
@@ -30,6 +31,7 @@
   "devDependencies": {
     "@cordisjs/oauth-utils": "^0.1.0",
     "@cordisjs/plugin-database": "^4.0.1",
+    "@cordisjs/plugin-logger": "^1.0.2",
     "@cordisjs/plugin-server": "^1.6.1",
     "@cordisjs/plugin-sso": "^0.1.0",
     "@cordisjs/plugin-timer": "^1.1.1",

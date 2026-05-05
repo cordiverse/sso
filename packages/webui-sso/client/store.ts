@@ -1,5 +1,4 @@
 import { reactive } from 'vue'
-import { startAuthentication, startRegistration } from '@simplewebauthn/browser'
 import type { ChallengeResponse, Identity, StepResult, User } from '../shared'
 
 const TOKEN_KEY = 'cordis:webui-sso:token'
@@ -163,10 +162,12 @@ async function handleChallenge(
     return { challengeId, code }
   }
   if (response.shape === 'webauthn-create') {
+    const { startRegistration } = await import('@simplewebauthn/browser')
     const attestation = await startRegistration({ optionsJSON: response.options })
     return { challengeId, response: attestation }
   }
   if (response.shape === 'webauthn-get') {
+    const { startAuthentication } = await import('@simplewebauthn/browser')
     const assertion = await startAuthentication({ optionsJSON: response.options })
     return { challengeId, response: assertion }
   }
@@ -192,11 +193,8 @@ export async function unlink(identityId: number): Promise<void> {
 const OAUTH_STATE_KEY = 'cordis:webui-sso:oauth-state'
 const OAUTH_INTENT_KEY = 'cordis:webui-sso:oauth-intent'
 
-export function buildOAuthRedirectUri(): string {
-  const url = new URL(location.href)
-  url.hash = '#/sso'
-  url.search = ''
-  return url.toString()
+export function buildOAuthRedirectUri(providerName: string): string {
+  return `${location.origin}/sso/callback/${providerName}`
 }
 
 export function generateState(): string {
@@ -210,38 +208,104 @@ export function rememberOAuthContext(provider: string, state: string) {
 
 export function consumeOAuthCallback(): { token?: string; error?: string } {
   const hash = location.hash
-  const queryStart = hash.lastIndexOf('?')
-  const params = new URLSearchParams(queryStart >= 0 ? hash.slice(queryStart + 1) : '')
-  const tokenFromQuery = params.get('token') ?? undefined
-  const errorFromQuery = params.get('error') ?? undefined
-  let token = tokenFromQuery
-  let error = errorFromQuery
-  if (!token && !error && hash.startsWith('#') && hash.includes('=') && !hash.startsWith('#/')) {
-    const flat = new URLSearchParams(hash.slice(1))
-    token = flat.get('token') ?? undefined
-    error = flat.get('error') ?? undefined
-  }
+  if (!hash.startsWith('#') || hash.startsWith('#/') || !hash.includes('=')) return {}
+  const params = new URLSearchParams(hash.slice(1))
+  const token = params.get('token') ?? undefined
+  const error = params.get('error') ?? undefined
   if (!token && !error) return {}
 
-  if (queryStart >= 0) {
-    history.replaceState(null, '', location.pathname + location.search + hash.slice(0, queryStart))
-  } else {
-    history.replaceState(null, '', location.pathname + location.search + '#/sso')
+  history.replaceState(null, '', location.pathname + location.search)
+  if (token) setToken(token)
+  sessionStorage.removeItem(OAUTH_STATE_KEY)
+  sessionStorage.removeItem(OAUTH_INTENT_KEY)
+  return { token, error }
+}
+
+const OAUTH_MESSAGE_TYPE = 'cordis:webui-sso:oauth'
+
+function isOAuthPopup(): boolean {
+  try {
+    return !!window.opener && window.opener !== window
+  } catch {
+    return false
+  }
+}
+
+export function reportOAuthToOpener(): boolean {
+  if (!isOAuthPopup()) return false
+  const hash = location.hash
+  if (!hash.startsWith('#') || hash.startsWith('#/') || !hash.includes('=')) return false
+  const params = new URLSearchParams(hash.slice(1))
+  const token = params.get('token') ?? undefined
+  const error = params.get('error') ?? undefined
+  if (!token && !error) return false
+  try {
+    window.opener!.postMessage({ type: OAUTH_MESSAGE_TYPE, token, error }, location.origin)
+  } catch {}
+  window.close()
+  return true
+}
+
+export async function runOAuthFlow(kind: FlowKind, providerName: string): Promise<{ token?: string; error?: string }> {
+  const popup = window.open('about:blank', `cordis-oauth-${providerName}`, 'width=600,height=700')
+  if (!popup) {
+    await startRedirectFlow(kind, providerName)
+    return {}
   }
 
-  if (token) {
-    setToken(token)
+  const resultPromise = new Promise<{ token?: string; error?: string }>((resolve) => {
+    let polled: ReturnType<typeof setInterval>
+    const cleanup = () => {
+      window.removeEventListener('message', onMessage)
+      clearInterval(polled)
+    }
+    const onMessage = (e: MessageEvent) => {
+      if (e.origin !== location.origin) return
+      if (e.data?.type !== OAUTH_MESSAGE_TYPE) return
+      cleanup()
+      resolve({ token: e.data.token, error: e.data.error })
+    }
+    window.addEventListener('message', onMessage)
+    polled = setInterval(() => {
+      if (popup.closed) {
+        cleanup()
+        resolve({ error: 'USER_CANCELED' })
+      }
+    }, 500)
+  })
+
+  const state = generateState()
+  rememberOAuthContext(providerName, state)
+  try {
+    const result = await ssoStep(kind, providerName, {
+      redirect_uri: buildOAuthRedirectUri(providerName),
+      state,
+    })
+    if (result.phase !== 'redirect') {
+      popup.close()
+      return { error: 'UNEXPECTED_PHASE' }
+    }
+    popup.location.href = result.url
+  } catch (e: any) {
+    popup.close()
+    return { error: e?.code ?? 'UNKNOWN' }
+  }
+
+  const res = await resultPromise
+  if (res.token) {
+    setToken(res.token)
     sessionStorage.removeItem(OAUTH_STATE_KEY)
     sessionStorage.removeItem(OAUTH_INTENT_KEY)
+    await refresh()
   }
-  return { token, error }
+  return res
 }
 
 export async function startRedirectFlow(kind: FlowKind, providerName: string): Promise<void> {
   const state = generateState()
   rememberOAuthContext(providerName, state)
   await runFlow(kind, providerName, {
-    redirect_uri: buildOAuthRedirectUri(),
+    redirect_uri: buildOAuthRedirectUri(providerName),
     state,
   })
 }

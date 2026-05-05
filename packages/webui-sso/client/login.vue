@@ -62,9 +62,7 @@ import { useRpc } from '@cordisjs/client'
 import {
   ssoStep,
   SsoError,
-  generateState,
-  buildOAuthRedirectUri,
-  rememberOAuthContext,
+  startRedirectFlow,
 } from './store'
 import type { ProviderMeta, StepResult } from '../shared'
 import CredentialsForm from './components/credentials.vue'
@@ -188,20 +186,10 @@ async function onRedirectStart(p: ProviderMeta, kind: 'login' | 'register' | 'bi
   const k = kind === 'bind' ? 'login' : kind
   loading[p.name] = true
   try {
-    const state = generateState()
-    rememberOAuthContext(p.name, state)
-    const result = await ssoStep(k, p.name, {
-      redirect_uri: buildOAuthRedirectUri(),
-      state,
-    })
-    if (result.phase === 'redirect') {
-      location.assign(result.url)
-      return
-    }
-    handleFinalResult(result, k)
+    await startRedirectFlow(k, p.name)
+    // location.assign has fired inside runFlow; page is navigating away.
   } catch (e) {
     ElMessage.error(formatAuthError(e, k))
-  } finally {
     loading[p.name] = false
   }
 }

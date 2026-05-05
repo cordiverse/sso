@@ -23,7 +23,7 @@ const emit = defineEmits<{
 
 const hint = computed(() => {
   if (props.mode === 'link') return `使用 ${props.providerName} 账号绑定到当前账户。`
-  return `使用 ${props.providerName} 账号登录（新账号自动注册）。`
+  return `使用 ${props.providerName} 账号登录。`
 })
 
 const buttonLabel = computed(() => {

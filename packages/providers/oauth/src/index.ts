@@ -1,7 +1,8 @@
 import { Context, Inject } from 'cordis'
-import { RedirectProvider, Sso } from '@cordisjs/plugin-sso'
+import { RedirectProvider, Sso, ssoError } from '@cordisjs/plugin-sso'
 import { callbackResponse, decodeJwtPayload, handleOAuthCallback, PkceStore, StateStore } from '@cordisjs/oauth-utils'
 import type { Database } from '@cordisjs/plugin-database'
+import type {} from '@cordisjs/plugin-logger'
 import type {} from '@cordisjs/plugin-server'
 import type {} from '@cordisjs/plugin-timer'
 
@@ -42,6 +43,12 @@ export interface OAuthPreset {
     avatar?: string
   }
   getRelated?(data: any): { provider: string; key: any }[]
+  /**
+   * Revoke the OAuth grant on the provider side, so the next authorize
+   * forces a fresh consent page. Called on unlink. Should be idempotent —
+   * treat "grant not found" / 404 as success.
+   */
+  revoke?(accessToken: string, clientId: string, clientSecret: string): Promise<void>
 }
 
 export const github: OAuthPreset = {
@@ -56,6 +63,21 @@ export const github: OAuthPreset = {
     email: data.email,
     avatar: data.avatar_url,
   }),
+  async revoke(accessToken, clientId, clientSecret) {
+    const auth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64')
+    const res = await fetch(`https://api.github.com/applications/${clientId}/grant`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Basic ${auth}`,
+        Accept: 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ access_token: accessToken }),
+    })
+    if (!res.ok && res.status !== 404) {
+      throw new Error(`github revoke failed: HTTP ${res.status}`)
+    }
+  },
 }
 
 export const google: OAuthPreset = {
@@ -267,6 +289,7 @@ const builtinPresets: Record<string, OAuthPreset> = {
 
 @Inject('server')
 @Inject('timer')
+@Inject('logger')
 export default class OAuthProvider extends RedirectProvider {
   name: string
   canBePrimary = true
@@ -401,7 +424,7 @@ export default class OAuthProvider extends RedirectProvider {
           redirectUrl: this.config.redirectUrl,
         })
       } catch (e) {
-        console.warn('[sso-oauth]', e)
+        this.ctx.logger.warn('[sso-oauth]', e)
         return callbackResponse({ error: 'OAUTH_CALLBACK_FAILED', status: 500 }, this.config.redirectUrl)
       }
     })
@@ -477,6 +500,17 @@ export default class OAuthProvider extends RedirectProvider {
   }
 
   async unlink(identityId: number, db: Database = this.ctx.database) {
+    if (this.preset.revoke) {
+      const [row] = await db.get('sso.oauth', { identityId })
+      if (row?.accessToken) {
+        try {
+          await this.preset.revoke(row.accessToken, this.config.clientId, this.config.clientSecret)
+        } catch (e: any) {
+          this.ctx.logger.warn('[sso-oauth] revoke failed:', e)
+          throw ssoError(502, 'REVOKE_FAILED')
+        }
+      }
+    }
     await db.remove('sso.oauth', { identityId })
   }
 }

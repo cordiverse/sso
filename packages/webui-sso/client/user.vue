@@ -84,7 +84,7 @@
 
 <script lang="ts" setup>
 import { ref, computed, reactive, onMounted } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
 import {
   listIdentities,
   unlink as doUnlink,
@@ -92,9 +92,7 @@ import {
   ssoStep,
   store,
   SsoError,
-  generateState,
-  buildOAuthRedirectUri,
-  rememberOAuthContext,
+  runOAuthFlow,
 } from './store'
 import { useRpc } from '@cordisjs/client'
 import type { Identity, ProviderMeta, StepResult } from '../shared'
@@ -236,20 +234,13 @@ async function onChallengeComplete(p: ProviderMeta, code: string) {
 async function onRedirectStart(p: ProviderMeta, _kind: 'login' | 'register' | 'bind') {
   flowLoading[p.name] = true
   try {
-    const state = generateState()
-    rememberOAuthContext(p.name, state)
-    const result = await ssoStep('bind', p.name, {
-      redirect_uri: buildOAuthRedirectUri(),
-      state,
-    })
-    if (result.phase === 'redirect') {
-      location.assign(result.url)
+    const { error } = await runOAuthFlow('bind', p.name)
+    if (error) {
+      if (error !== 'USER_CANCELED') ElMessage.error(formatLinkError(new SsoError(error, 0)))
       return
     }
-    if (result.phase === 'finish') {
-      await refreshIdentities()
-      ElMessage.success('绑定成功')
-    }
+    await refreshIdentities()
+    ElMessage.success('绑定成功')
   } catch (e) {
     ElMessage.error(formatLinkError(e))
   } finally {
@@ -279,13 +270,23 @@ async function onUnlink(id: number, provider: string) {
   } catch {
     return
   }
+  const loading = ElLoading.service({
+    lock: true,
+    text: '正在解绑...',
+    background: 'rgba(0, 0, 0, 0.5)',
+  })
   try {
     await doUnlink(id)
     ElMessage.success('已解绑')
     await refreshIdentities()
   } catch (e) {
     const code = e instanceof SsoError ? e.code : 'unknown'
-    ElMessage.error(`解绑失败: ${code}`)
+    const msg = code === 'REVOKE_FAILED'
+      ? '撤销授权失败,请稍后重试'
+      : `解绑失败: ${code}`
+    ElMessage.error(msg)
+  } finally {
+    loading.close()
   }
 }
 
