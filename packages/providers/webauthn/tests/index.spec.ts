@@ -4,22 +4,19 @@ import MemoryDriver from '@cordisjs/plugin-database-memory'
 import Server from '@cordisjs/plugin-server'
 import Timer from '@cordisjs/plugin-timer'
 import Sso from '@cordisjs/plugin-sso'
-import { expect } from 'chai'
-import { install } from '@sinonjs/fake-timers'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { WebAuthnEmulator } from 'nid-webauthn-emulator'
 import WebAuthnProvider, { Config } from '../src'
 
 const ORIGIN = 'https://example.com'
 const RP_ID = 'example.com'
 
-let portCursor = 32100
-
 async function setup(extra: Partial<Config> = {}) {
   const ctx = new Context()
   await ctx.plugin(Database)
   await ctx.plugin(MemoryDriver)
   await ctx.plugin(Timer)
-  await ctx.plugin(Server, { host: '127.0.0.1', port: portCursor++, maxPort: 39999 })
+  await ctx.plugin(Server, { host: '127.0.0.1', port: 0 })
   await ctx.plugin(Sso)
   await ctx.plugin(WebAuthnProvider, {
     rpName: 'TestRP',
@@ -133,14 +130,14 @@ describe('@cordisjs/plugin-sso-webauthn', () => {
 
   describe('expiry', () => {
     it('returns CHALLENGE_EXPIRED after timeout', async () => {
-      const clock = install({ now: Date.now() })
+      vi.useFakeTimers({ now: Date.now() })
       try {
         const ctx = await setup({ timeout: 1000 })
         const emu = new WebAuthnEmulator()
         const provider = ctx.sso.getProvider('webauthn')!
         const { user } = await ctx.sso.createUser('x')
         const start = await provider.step({}, { kind: 'bind', userId: user.id })
-        clock.tick(2000)
+        vi.advanceTimersByTime(2000)
         const options = (start as any).response.options
         const attestation = emu.createJSON(ORIGIN, options)
         let err: any
@@ -152,7 +149,7 @@ describe('@cordisjs/plugin-sso-webauthn', () => {
         } catch (e) { err = e }
         expect(err?.code).to.equal('CHALLENGE_EXPIRED')
       } finally {
-        clock.uninstall()
+        vi.useRealTimers()
       }
     })
   })

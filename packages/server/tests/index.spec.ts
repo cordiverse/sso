@@ -7,7 +7,7 @@ import Sso, { CredentialsProvider, RedirectProvider, SsoProvider } from '@cordis
 import Password from '@cordisjs/plugin-sso-password'
 import Mail from '@cordisjs/plugin-sso-mail'
 import Totp from '@cordisjs/plugin-sso-totp'
-import { expect } from 'chai'
+import { afterEach, describe, expect, it } from 'vitest'
 import { name, inject, apply } from '../src'
 const SsoServer = { name, inject, apply }
 
@@ -32,8 +32,6 @@ class OAuthFakeProvider extends RedirectProvider {
   }
 }
 
-let portCursor = 31000
-
 const mailbox: { email: string; code: string }[] = []
 
 async function setup() {
@@ -41,7 +39,7 @@ async function setup() {
   await ctx.plugin(Database)
   await ctx.plugin(MemoryDriver)
   await ctx.plugin(Timer)
-  await ctx.plugin(Server, { host: '127.0.0.1', port: portCursor++, maxPort: 39999 })
+  await ctx.plugin(Server, { host: '127.0.0.1', port: 0 })
   await ctx.plugin(Sso)
   await ctx.plugin(Password)
   await ctx.plugin(Totp)

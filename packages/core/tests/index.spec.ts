@@ -1,8 +1,7 @@
 import { Context } from 'cordis'
 import Database from '@cordisjs/plugin-database'
 import MemoryDriver from '@cordisjs/plugin-database-memory'
-import { expect } from 'chai'
-import { install, InstalledClock } from '@sinonjs/fake-timers'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Sso, { CredentialsProvider, SsoProvider } from '../src'
 
 function sleep(ms = 0) {
@@ -124,15 +123,14 @@ describe('@cordisjs/plugin-sso', () => {
 
   describe('session lifecycle', () => {
     let ctx: Context
-    let clock: InstalledClock
 
     beforeEach(async () => {
-      clock = install({ now: 1700000000000 })
+      vi.useFakeTimers({ now: 1700000000000 })
       ctx = await setup({ sessionMaxAge: 60_000 })
     })
 
     afterEach(() => {
-      clock.uninstall()
+      vi.useRealTimers()
     })
 
     it('createSession + validateSession round-trips', async () => {
@@ -147,7 +145,7 @@ describe('@cordisjs/plugin-sso', () => {
     it('validateSession returns null after expiry and self-deletes', async () => {
       const { user, identityId } = await ctx.sso.createUser('password')
       const token = await ctx.sso.createSession(user.id, identityId)
-      clock.tick(60_001)
+      vi.advanceTimersByTime(60_001)
       expect(await ctx.sso.validateSession(token)).to.be.null
       expect(await ctx.database.get('sso.session', { token })).to.have.length(0)
     })

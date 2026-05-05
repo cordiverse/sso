@@ -2,7 +2,7 @@ import { Context } from 'cordis'
 import Database from '@cordisjs/plugin-database'
 import MemoryDriver from '@cordisjs/plugin-database-memory'
 import Sso from '@cordisjs/plugin-sso'
-import { expect } from 'chai'
+import { beforeEach, describe, expect, it } from 'vitest'
 import Password from '../src'
 
 async function setup(config: Password.Config = {}) {

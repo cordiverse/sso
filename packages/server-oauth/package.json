@@ -21,13 +21,13 @@
   "homepage": "https://github.com/cordiverse/sso",
   "peerDependencies": {
     "@cordisjs/plugin-database": "^4.0.1",
-    "@cordisjs/plugin-server": "^1.5.0",
+    "@cordisjs/plugin-server": "^1.6.1",
     "@cordisjs/plugin-sso": "^0.1.0",
     "cordis": "^4.0.0-rc.4"
   },
   "devDependencies": {
     "@cordisjs/plugin-database": "^4.0.1",
-    "@cordisjs/plugin-server": "^1.5.0",
+    "@cordisjs/plugin-server": "^1.6.1",
     "@cordisjs/plugin-sso": "^0.1.0",
     "cordis": "^4.0.0-rc.4"
   },

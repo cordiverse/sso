@@ -3,7 +3,6 @@ import { RedirectProvider, Sso } from '@cordisjs/plugin-sso'
 import { callbackResponse, decodeJwtPayload, handleOAuthCallback, PkceStore, StateStore } from '@cordisjs/oauth-utils'
 import type { Database } from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-server'
-import type {} from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-timer'
 
 declare module '@cordisjs/plugin-database' {
@@ -52,7 +51,10 @@ export const github: OAuthPreset = {
   userInfoUrl: 'https://api.github.com/user',
   defaultScope: 'read:user user:email',
   extractUser: (data) => ({
-    externalId: String(data.id), displayName: data.login, email: data.email, avatar: data.avatar_url,
+    externalId: String(data.id),
+    displayName: data.login,
+    email: data.email,
+    avatar: data.avatar_url,
   }),
 }
 
@@ -66,7 +68,10 @@ export const google: OAuthPreset = {
   tokenParams: { grant_type: 'authorization_code' },
   oidc: true,
   extractUser: (data) => ({
-    externalId: data.sub ?? data.id, displayName: data.name, email: data.email, avatar: data.picture,
+    externalId: data.sub ?? data.id,
+    displayName: data.name,
+    email: data.email,
+    avatar: data.picture,
   }),
 }
 
@@ -80,7 +85,10 @@ export const microsoft: OAuthPreset = {
   tokenParams: { grant_type: 'authorization_code' },
   oidc: true,
   extractUser: (data) => ({
-    externalId: data.sub ?? data.id, displayName: data.name ?? data.displayName, email: data.email ?? data.mail ?? data.userPrincipalName ?? data.preferred_username, avatar: undefined,
+    externalId: data.sub ?? data.id,
+    displayName: data.name ?? data.displayName,
+    email: data.email ?? data.mail ?? data.userPrincipalName ?? data.preferred_username,
+    avatar: undefined,
   }),
 }
 
@@ -107,7 +115,10 @@ export const gitlab: OAuthPreset = {
   defaultScope: 'read_user',
   tokenParams: { grant_type: 'authorization_code' },
   extractUser: (data) => ({
-    externalId: String(data.id), displayName: data.username, email: data.email, avatar: data.avatar_url,
+    externalId: String(data.id),
+    displayName: data.username,
+    email: data.email,
+    avatar: data.avatar_url,
   }),
 }
 
@@ -118,7 +129,10 @@ export const facebook: OAuthPreset = {
   userInfoUrl: 'https://graph.facebook.com/me?fields=id,name,email,picture',
   defaultScope: 'email public_profile',
   extractUser: (data) => ({
-    externalId: data.id, displayName: data.name, email: data.email, avatar: data.picture?.data?.url,
+    externalId: data.id,
+    displayName: data.name,
+    email: data.email,
+    avatar: data.picture?.data?.url,
   }),
 }
 
@@ -158,7 +172,10 @@ export const gitee: OAuthPreset = {
   defaultScope: 'user_info',
   tokenParams: { grant_type: 'authorization_code' },
   extractUser: (data) => ({
-    externalId: String(data.id), displayName: data.login, email: data.email, avatar: data.avatar_url,
+    externalId: String(data.id),
+    displayName: data.login,
+    email: data.email,
+    avatar: data.avatar_url,
   }),
 }
 
@@ -170,7 +187,10 @@ export const dingtalk: OAuthPreset = {
   defaultScope: 'openid',
   tokenParams: { grantType: 'authorization_code' },
   extractUser: (data) => ({
-    externalId: data.openId ?? data.unionId, displayName: data.nick, email: data.email, avatar: data.avatarUrl,
+    externalId: data.openId ?? data.unionId,
+    displayName: data.nick,
+    email: data.email,
+    avatar: data.avatarUrl,
   }),
 }
 
@@ -248,8 +268,6 @@ const builtinPresets: Record<string, OAuthPreset> = {
 @Inject('server')
 @Inject('timer')
 export default class OAuthProvider extends RedirectProvider {
-  static reusable = true
-
   name: string
   canBePrimary = true
   canStepUp = false

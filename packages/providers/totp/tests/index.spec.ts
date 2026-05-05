@@ -3,8 +3,7 @@ import Database from '@cordisjs/plugin-database'
 import MemoryDriver from '@cordisjs/plugin-database-memory'
 import Timer from '@cordisjs/plugin-timer'
 import Sso from '@cordisjs/plugin-sso'
-import { expect } from 'chai'
-import { install, InstalledClock } from '@sinonjs/fake-timers'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHmac } from 'node:crypto'
 import Totp, { Config as TotpConfig } from '../src'
 
@@ -81,16 +80,15 @@ describe('@cordisjs/plugin-sso-totp', () => {
 
   describe('bind (step 2 verify)', () => {
     let ctx: Context
-    let clock: InstalledClock
     const T0 = 1700000000000
 
     beforeEach(async () => {
-      clock = install({ now: T0 })
+      vi.useFakeTimers({ now: T0 })
       ctx = await setup()
     })
 
     afterEach(() => {
-      clock.uninstall()
+      vi.useRealTimers()
     })
 
     it('valid code → atomic link + sso.totp row', async () => {
@@ -124,15 +122,14 @@ describe('@cordisjs/plugin-sso-totp', () => {
   })
 
   describe('custom config', () => {
-    let clock: InstalledClock
     const T0 = 1700000000000
 
     beforeEach(() => {
-      clock = install({ now: T0 })
+      vi.useFakeTimers({ now: T0 })
     })
 
     afterEach(() => {
-      clock.uninstall()
+      vi.useRealTimers()
     })
 
     it('honors digits / period / algorithm', async () => {

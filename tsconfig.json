@@ -12,5 +12,5 @@
       "@cordisjs/plugin-sms-*": ["./packages/sms/*/src"],
     },
   },
-  "files": [],
+  "include": [],
 }

@@ -1,7 +1,6 @@
 import { Context } from 'cordis'
 import Timer from '@cordisjs/plugin-timer'
-import { expect } from 'chai'
-import { install, InstalledClock } from '@sinonjs/fake-timers'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
 import { callbackResponse, decodeJwtPayload, PkceStore, StateStore } from '../src'
 
@@ -74,16 +73,15 @@ describe('@cordisjs/oauth-utils', () => {
 
   describe('PkceStore', () => {
     let ctx: Context
-    let clock: InstalledClock
 
     beforeEach(async () => {
-      clock = install({ now: 1700000000000 })
+      vi.useFakeTimers({ now: 1700000000000 })
       ctx = new Context()
       await ctx.plugin(Timer)
     })
 
     afterEach(() => {
-      clock.uninstall()
+      vi.useRealTimers()
     })
 
     it('issue produces a state, code_verifier, and matching S256 challenge', async () => {
@@ -123,7 +121,7 @@ describe('@cordisjs/oauth-utils', () => {
     it('consume returns undefined and removes after TTL expiry', async () => {
       const store = new PkceStore(ctx, { ttl: 1000 })
       const { state } = store.issue('https://app/callback')
-      clock.tick(1500)
+      vi.advanceTimersByTime(1500)
       // ctx.timeout fires the cleanup; even if it didn't, consume() rejects expired
       expect(store.consume(state)).to.be.undefined
       expect(store.size).to.equal(0)
@@ -139,16 +137,15 @@ describe('@cordisjs/oauth-utils', () => {
 
   describe('StateStore', () => {
     let ctx: Context
-    let clock: InstalledClock
 
     beforeEach(async () => {
-      clock = install({ now: 1700000000000 })
+      vi.useFakeTimers({ now: 1700000000000 })
       ctx = new Context()
       await ctx.plugin(Timer)
     })
 
     afterEach(() => {
-      clock.uninstall()
+      vi.useRealTimers()
     })
 
     it('issue + consume round-trip', async () => {
@@ -177,7 +174,7 @@ describe('@cordisjs/oauth-utils', () => {
     it('consume rejects expired state', async () => {
       const store = new StateStore(ctx, { ttl: 1000 })
       const { state } = store.issue('https://app/cb')
-      clock.tick(1500)
+      vi.advanceTimersByTime(1500)
       expect(store.consume(state)).to.be.undefined
       expect(store.size).to.equal(0)
     })

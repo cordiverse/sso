@@ -44,12 +44,7 @@
   "devDependencies": {
     "@cordisjs/plugin-database": "^4.0.1",
     "@cordisjs/plugin-database-memory": "^4.0.0",
-    "@sinonjs/fake-timers": "^6.0.1",
-    "@types/chai": "^5.2.3",
-    "@types/mocha": "^10.0.10",
     "@types/node": "^25.3.5",
-    "@types/sinonjs__fake-timers": "^6.0.4",
-    "chai": "^5.3.3",
     "cordis": "^4.0.0-rc.4"
   },
   "dependencies": {
