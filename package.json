@@ -7,8 +7,7 @@
   "workspaces": [
     "external/*",
     "packages/*",
-    "packages/providers/*",
-    "packages/sms/*"
+    "packages/providers/*"
   ],
   "license": "MIT",
   "scripts": {
