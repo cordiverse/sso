@@ -1,4 +1,5 @@
 import { OAuthBaseProvider, OAuthUserInfo, StandardOAuthConfig } from '../base'
+import z from 'schemastery'
 
 class GiteeProvider extends OAuthBaseProvider<GiteeProvider.Config> {
   name = 'gitee'
@@ -22,7 +23,14 @@ class GiteeProvider extends OAuthBaseProvider<GiteeProvider.Config> {
 }
 
 namespace GiteeProvider {
-  export interface Config extends StandardOAuthConfig {}
+  export interface Config extends StandardOAuthConfig {
+    preset: 'gitee'
+  }
+
+  export const Config: z<Config> = z.intersect([
+    z.object({ preset: z.const('gitee').required() }),
+    StandardOAuthConfig,
+  ])
 }
 
 export default GiteeProvider

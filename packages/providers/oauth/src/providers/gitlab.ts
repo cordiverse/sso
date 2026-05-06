@@ -1,4 +1,5 @@
 import { OAuthBaseProvider, OAuthUserInfo, SsoOAuth, StandardOAuthConfig } from '../base'
+import z from 'schemastery'
 
 class GitlabProvider extends OAuthBaseProvider<GitlabProvider.Config> {
   name = 'gitlab'
@@ -37,7 +38,14 @@ class GitlabProvider extends OAuthBaseProvider<GitlabProvider.Config> {
 }
 
 namespace GitlabProvider {
-  export interface Config extends StandardOAuthConfig {}
+  export interface Config extends StandardOAuthConfig {
+    preset: 'gitlab'
+  }
+
+  export const Config: z<Config> = z.intersect([
+    z.object({ preset: z.const('gitlab').required() }),
+    StandardOAuthConfig,
+  ])
 }
 
 export default GitlabProvider

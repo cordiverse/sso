@@ -1,4 +1,5 @@
 import { OAuthBaseProvider, OAuthUserInfo, SsoOAuth, StandardOAuthConfig } from '../base'
+import z from 'schemastery'
 
 class GoogleProvider extends OAuthBaseProvider<GoogleProvider.Config> {
   name = 'google'
@@ -47,7 +48,14 @@ class GoogleProvider extends OAuthBaseProvider<GoogleProvider.Config> {
 }
 
 namespace GoogleProvider {
-  export interface Config extends StandardOAuthConfig {}
+  export interface Config extends StandardOAuthConfig {
+    preset: 'google'
+  }
+
+  export const Config: z<Config> = z.intersect([
+    z.object({ preset: z.const('google').required() }),
+    StandardOAuthConfig,
+  ])
 }
 
 export default GoogleProvider

@@ -1,4 +1,5 @@
 import { Context } from 'cordis'
+import Logger from '@cordisjs/plugin-logger'
 import Timer from '@cordisjs/plugin-timer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
@@ -78,6 +79,7 @@ describe('sso-oauth utils', () => {
       vi.useFakeTimers({ now: 1700000000000 })
       ctx = new Context()
       await ctx.plugin(Timer)
+      await ctx.plugin(Logger)
     })
 
     afterEach(() => {
@@ -141,6 +143,7 @@ describe('sso-oauth utils', () => {
       vi.useFakeTimers({ now: 1700000000000 })
       ctx = new Context()
       await ctx.plugin(Timer)
+      await ctx.plugin(Logger)
     })
 
     afterEach(() => {

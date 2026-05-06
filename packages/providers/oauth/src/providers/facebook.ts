@@ -1,4 +1,5 @@
 import { OAuthBaseProvider, OAuthUserInfo, SsoOAuth, StandardOAuthConfig } from '../base'
+import z from 'schemastery'
 
 class FacebookProvider extends OAuthBaseProvider<FacebookProvider.Config> {
   name = 'facebook'
@@ -27,7 +28,14 @@ class FacebookProvider extends OAuthBaseProvider<FacebookProvider.Config> {
 }
 
 namespace FacebookProvider {
-  export interface Config extends StandardOAuthConfig {}
+  export interface Config extends StandardOAuthConfig {
+    preset: 'facebook'
+  }
+
+  export const Config: z<Config> = z.intersect([
+    z.object({ preset: z.const('facebook').required() }),
+    StandardOAuthConfig,
+  ])
 }
 
 export default FacebookProvider

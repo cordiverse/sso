@@ -1,4 +1,5 @@
 import { Context } from 'cordis'
+import Logger from '@cordisjs/plugin-logger'
 import Database from '@cordisjs/plugin-database'
 import MemoryDriver from '@cordisjs/plugin-database-memory'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -10,6 +11,7 @@ function sleep(ms = 0) {
 
 async function setup(config: Sso.Config = {}) {
   const ctx = new Context()
+  await ctx.plugin(Logger)
   await ctx.plugin(Database)
   await ctx.plugin(MemoryDriver)
   await ctx.plugin(Sso, config)

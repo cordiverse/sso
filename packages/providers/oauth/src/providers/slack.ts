@@ -1,4 +1,5 @@
 import { OAuthBaseProvider, OAuthUserInfo, SsoOAuth, StandardOAuthConfig } from '../base'
+import z from 'schemastery'
 
 class SlackProvider extends OAuthBaseProvider<SlackProvider.Config> {
   name = 'slack'
@@ -33,7 +34,14 @@ class SlackProvider extends OAuthBaseProvider<SlackProvider.Config> {
 }
 
 namespace SlackProvider {
-  export interface Config extends StandardOAuthConfig {}
+  export interface Config extends StandardOAuthConfig {
+    preset: 'slack'
+  }
+
+  export const Config: z<Config> = z.intersect([
+    z.object({ preset: z.const('slack').required() }),
+    StandardOAuthConfig,
+  ])
 }
 
 export default SlackProvider

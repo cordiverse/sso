@@ -4,6 +4,7 @@ import type {} from '@cordisjs/plugin-server'
 import type {} from '@cordisjs/plugin-timer'
 import type {} from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-sso'
+import z from 'schemastery'
 
 import AppleProvider from './providers/apple'
 import DingtalkProvider from './providers/dingtalk'
@@ -33,24 +34,54 @@ export * from './utils'
  * `preset: 'generic'` for custom RFC 6749 IdPs (you supply the four URLs).
  */
 export type Config =
-  | ({ preset: 'apple' } & AppleProvider.Config)
-  | ({ preset: 'dingtalk' } & DingtalkProvider.Config)
-  | ({ preset: 'discord' } & DiscordProvider.Config)
-  | ({ preset: 'facebook' } & FacebookProvider.Config)
-  | ({ preset: 'feishu' } & FeishuProvider.Config)
-  | ({ preset: 'generic' } & GenericProvider.Config)
-  | ({ preset: 'gitee' } & GiteeProvider.Config)
-  | ({ preset: 'github' } & GithubProvider.Config)
-  | ({ preset: 'gitlab' } & GitlabProvider.Config)
-  | ({ preset: 'google' } & GoogleProvider.Config)
-  | ({ preset: 'lark' } & LarkProvider.Config)
-  | ({ preset: 'linkedin' } & LinkedinProvider.Config)
-  | ({ preset: 'microsoft' } & MicrosoftProvider.Config)
-  | ({ preset: 'qq' } & QqProvider.Config)
-  | ({ preset: 'slack' } & SlackProvider.Config)
-  | ({ preset: 'twitter' } & TwitterProvider.Config)
-  | ({ preset: 'wechat' } & WeChatProvider.Config)
-  | ({ preset: 'weibo' } & WeiboProvider.Config)
+  | AppleProvider.Config
+  | DingtalkProvider.Config
+  | DiscordProvider.Config
+  | FacebookProvider.Config
+  | FeishuProvider.Config
+  | GenericProvider.Config
+  | GiteeProvider.Config
+  | GithubProvider.Config
+  | GitlabProvider.Config
+  | GoogleProvider.Config
+  | LarkProvider.Config
+  | LinkedinProvider.Config
+  | MicrosoftProvider.Config
+  | QqProvider.Config
+  | SlackProvider.Config
+  | TwitterProvider.Config
+  | WeChatProvider.Config
+  | WeiboProvider.Config
+
+export const Config: z<Config> = z.intersect([
+  z.object({
+    preset: z.union([
+      'apple', 'dingtalk', 'discord', 'facebook', 'feishu', 'generic',
+      'gitee', 'github', 'gitlab', 'google', 'lark', 'linkedin',
+      'microsoft', 'qq', 'slack', 'twitter', 'wechat', 'weibo',
+    ] as const).required().description('OAuth 服务提供方。'),
+  }),
+  z.union([
+    AppleProvider.Config,
+    DingtalkProvider.Config,
+    DiscordProvider.Config,
+    FacebookProvider.Config,
+    FeishuProvider.Config,
+    GenericProvider.Config,
+    GiteeProvider.Config,
+    GithubProvider.Config,
+    GitlabProvider.Config,
+    GoogleProvider.Config,
+    LarkProvider.Config,
+    LinkedinProvider.Config,
+    MicrosoftProvider.Config,
+    QqProvider.Config,
+    SlackProvider.Config,
+    TwitterProvider.Config,
+    WeChatProvider.Config,
+    WeiboProvider.Config,
+  ]),
+] as const)
 
 const providers = {
   apple: AppleProvider,

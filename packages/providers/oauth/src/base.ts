@@ -4,6 +4,7 @@ import type { Request } from '@cordisjs/plugin-server'
 import type {} from '@cordisjs/plugin-logger'
 import { RedirectProvider, Sso, ssoError } from '@cordisjs/plugin-sso'
 import { callbackResponse, handleOAuthCallback, PkceEntry, PkceStore, StateEntry, StateStore } from './utils'
+import z from 'schemastery'
 
 export type { PkceEntry, StateEntry } from './utils'
 
@@ -64,11 +65,24 @@ export interface OAuthBaseConfig {
   redirectUrl?: string
 }
 
+export const OAuthBaseConfig: z<OAuthBaseConfig> = z.object({
+  scope: z.string().description('OAuth scope (空格分隔)。'),
+  redirectUrl: z.string().description('回调成功后跳转的目标 URL。默认 server.baseUrl。'),
+})
+
 /** Standard config shape for providers using `clientId`/`clientSecret` naming. */
 export interface StandardOAuthConfig extends OAuthBaseConfig {
   clientId: string
   clientSecret: string
 }
+
+export const StandardOAuthConfig: z<StandardOAuthConfig> = z.intersect([
+  z.object({
+    clientId: z.string().required().description('OAuth 应用 client_id。'),
+    clientSecret: z.string().required().role('secret').description('OAuth 应用 client_secret。'),
+  }),
+  OAuthBaseConfig,
+])
 
 export interface OAuthCallbackParams {
   code: string

@@ -1,4 +1,5 @@
 import { OAuthBaseConfig, OAuthBaseProvider, OAuthTokenResponse, OAuthUserInfo, PkceEntry, StateEntry } from '../base'
+import z from 'schemastery'
 
 function parseCallback(text: string): any {
   const match = text.match(/callback\(\s*(.*?)\s*\);?/s)
@@ -72,9 +73,19 @@ class QqProvider extends OAuthBaseProvider<QqProvider.Config> {
 
 namespace QqProvider {
   export interface Config extends OAuthBaseConfig {
+    preset: 'qq'
     appId: string
     appKey: string
   }
+
+  export const Config: z<Config> = z.intersect([
+    z.object({
+      preset: z.const('qq').required(),
+      appId: z.string().required().description('QQ 互联应用 App ID。'),
+      appKey: z.string().required().role('secret').description('QQ 互联应用 App Key。'),
+    }),
+    OAuthBaseConfig,
+  ])
 }
 
 export default QqProvider

@@ -1,4 +1,5 @@
 import { OAuthBaseProvider, OAuthUserInfo, SsoOAuth, StandardOAuthConfig } from '../base'
+import z from 'schemastery'
 
 class DiscordProvider extends OAuthBaseProvider<DiscordProvider.Config> {
   name = 'discord'
@@ -38,7 +39,14 @@ class DiscordProvider extends OAuthBaseProvider<DiscordProvider.Config> {
 }
 
 namespace DiscordProvider {
-  export interface Config extends StandardOAuthConfig {}
+  export interface Config extends StandardOAuthConfig {
+    preset: 'discord'
+  }
+
+  export const Config: z<Config> = z.intersect([
+    z.object({ preset: z.const('discord').required() }),
+    StandardOAuthConfig,
+  ])
 }
 
 export default DiscordProvider

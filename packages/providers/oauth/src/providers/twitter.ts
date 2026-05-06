@@ -1,4 +1,5 @@
 import { OAuthBaseProvider, OAuthTokenResponse, OAuthUserInfo, PkceEntry, SsoOAuth, StandardOAuthConfig, StateEntry } from '../base'
+import z from 'schemastery'
 
 class TwitterProvider extends OAuthBaseProvider<TwitterProvider.Config> {
   name = 'twitter'
@@ -66,7 +67,14 @@ class TwitterProvider extends OAuthBaseProvider<TwitterProvider.Config> {
 }
 
 namespace TwitterProvider {
-  export interface Config extends StandardOAuthConfig {}
+  export interface Config extends StandardOAuthConfig {
+    preset: 'twitter'
+  }
+
+  export const Config: z<Config> = z.intersect([
+    z.object({ preset: z.const('twitter').required() }),
+    StandardOAuthConfig,
+  ])
 }
 
 export default TwitterProvider

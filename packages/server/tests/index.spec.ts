@@ -1,6 +1,7 @@
 import { Context } from 'cordis'
 import Database from '@cordisjs/plugin-database'
 import MemoryDriver from '@cordisjs/plugin-database-memory'
+import Logger from '@cordisjs/plugin-logger'
 import Server from '@cordisjs/plugin-server'
 import Timer from '@cordisjs/plugin-timer'
 import Sso, { CredentialsProvider, RedirectProvider, SsoProvider } from '@cordisjs/plugin-sso'
@@ -36,6 +37,7 @@ const mailbox: { email: string; code: string }[] = []
 
 async function setup() {
   const ctx = new Context()
+  await ctx.plugin(Logger)
   await ctx.plugin(Database)
   await ctx.plugin(MemoryDriver)
   await ctx.plugin(Timer)

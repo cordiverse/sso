@@ -1,13 +1,34 @@
-import { OAuthBaseProvider, OAuthTokenResponse, OAuthUserInfo, PkceEntry, StandardOAuthConfig, StateEntry } from '../base'
+import { OAuthBaseConfig, OAuthBaseProvider, OAuthTokenResponse, OAuthUserInfo, PkceEntry, StateEntry } from '../base'
+import z from 'schemastery'
+
+export interface LarkFeishuConfig extends OAuthBaseConfig {
+  appId: string
+  appSecret: string
+}
+
+export const LarkFeishuConfig: z<LarkFeishuConfig> = z.intersect([
+  z.object({
+    appId: z.string().required().description('应用 App ID。'),
+    appSecret: z.string().required().role('secret').description('应用 App Secret。'),
+  }),
+  OAuthBaseConfig,
+])
 
 /**
  * Shared scaffolding for Lark (open.larksuite.com) / Feishu (open.feishu.cn).
  * Same OAuth protocol; only the four base URLs differ. The two concrete
  * subclasses set `name` and the URL fields.
+ *
+ * Both products use `appId` / `appSecret` as the user-facing credential field
+ * names (not `clientId` / `clientSecret`); we override the credential getters
+ * to remap config → protected fields.
  */
-export abstract class LarkFeishuProvider extends OAuthBaseProvider<StandardOAuthConfig> {
+export abstract class LarkFeishuProvider extends OAuthBaseProvider<LarkFeishuConfig> {
   protected abstract readonly appTokenUrl: string
   protected readonly scope = this.config.scope ?? ''
+
+  protected override get clientId() { return this.config.appId }
+  protected override get clientSecret() { return this.config.appSecret }
 
   // Lark/Feishu authorize URL uses `app_id` (not `client_id`).
   protected override buildAuthorizeParams(

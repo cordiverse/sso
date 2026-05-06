@@ -3,6 +3,7 @@ import type { Request } from '@cordisjs/plugin-server'
 import { OAuthBaseConfig, OAuthBaseProvider, OAuthCallbackParams, OAuthTokenResponse, OAuthUserInfo, PkceEntry, SsoOAuth, StateEntry } from '../base'
 import { decodeJwtPayload } from '../utils'
 import { ssoError } from '@cordisjs/plugin-sso'
+import z from 'schemastery'
 
 function generateClientSecret(config: AppleProvider.Config): string {
   const now = Math.floor(Date.now() / 1000)
@@ -140,11 +141,23 @@ class AppleProvider extends OAuthBaseProvider<AppleProvider.Config> {
 
 namespace AppleProvider {
   export interface Config extends OAuthBaseConfig {
+    preset: 'apple'
     clientId: string
     teamId: string
     keyId: string
     privateKey: string
   }
+
+  export const Config: z<Config> = z.intersect([
+    z.object({
+      preset: z.const('apple').required(),
+      clientId: z.string().required().description('Sign in with Apple 服务的 Service ID(`com.example.app`)。'),
+      teamId: z.string().required().description('Apple Developer Team ID(10 位字母数字)。'),
+      keyId: z.string().required().description('Sign in with Apple 私钥的 Key ID。'),
+      privateKey: z.string().required().role('textarea').description('与 Key ID 对应的 ES256 私钥(PEM 格式)。'),
+    }),
+    OAuthBaseConfig,
+  ])
 }
 
 export default AppleProvider

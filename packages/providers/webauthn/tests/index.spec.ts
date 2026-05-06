@@ -2,6 +2,7 @@ import { Context } from 'cordis'
 import Database from '@cordisjs/plugin-database'
 import MemoryDriver from '@cordisjs/plugin-database-memory'
 import Server from '@cordisjs/plugin-server'
+import Logger from '@cordisjs/plugin-logger'
 import Timer from '@cordisjs/plugin-timer'
 import Sso from '@cordisjs/plugin-sso'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -15,6 +16,7 @@ async function setup(extra: Partial<Config> = {}) {
   const ctx = new Context()
   await ctx.plugin(Database)
   await ctx.plugin(MemoryDriver)
+  await ctx.plugin(Logger)
   await ctx.plugin(Timer)
   await ctx.plugin(Server, { host: '127.0.0.1', port: 0 })
   await ctx.plugin(Sso)

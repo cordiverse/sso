@@ -1,4 +1,5 @@
 import { OAuthBaseProvider, OAuthTokenResponse, OAuthUserInfo, PkceEntry, SsoOAuth, StandardOAuthConfig, StateEntry } from '../base'
+import z from 'schemastery'
 
 class WeiboProvider extends OAuthBaseProvider<WeiboProvider.Config> {
   name = 'weibo'
@@ -54,7 +55,14 @@ class WeiboProvider extends OAuthBaseProvider<WeiboProvider.Config> {
 }
 
 namespace WeiboProvider {
-  export interface Config extends StandardOAuthConfig {}
+  export interface Config extends StandardOAuthConfig {
+    preset: 'weibo'
+  }
+
+  export const Config: z<Config> = z.intersect([
+    z.object({ preset: z.const('weibo').required() }),
+    StandardOAuthConfig,
+  ])
 }
 
 export default WeiboProvider

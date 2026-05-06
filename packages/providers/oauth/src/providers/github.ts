@@ -1,4 +1,5 @@
 import { OAuthBaseProvider, OAuthUserInfo, SsoOAuth, StandardOAuthConfig } from '../base'
+import z from 'schemastery'
 
 class GithubProvider extends OAuthBaseProvider<GithubProvider.Config> {
   name = 'github'
@@ -37,7 +38,14 @@ class GithubProvider extends OAuthBaseProvider<GithubProvider.Config> {
 }
 
 namespace GithubProvider {
-  export interface Config extends StandardOAuthConfig {}
+  export interface Config extends StandardOAuthConfig {
+    preset: 'github'
+  }
+
+  export const Config: z<Config> = z.intersect([
+    z.object({ preset: z.const('github').required() }),
+    StandardOAuthConfig,
+  ])
 }
 
 export default GithubProvider

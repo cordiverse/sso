@@ -1,4 +1,5 @@
 import { OAuthBaseProvider, OAuthUserInfo, StandardOAuthConfig } from '../base'
+import z from 'schemastery'
 
 class MicrosoftProvider extends OAuthBaseProvider<MicrosoftProvider.Config> {
   name = 'microsoft'
@@ -33,7 +34,14 @@ class MicrosoftProvider extends OAuthBaseProvider<MicrosoftProvider.Config> {
 }
 
 namespace MicrosoftProvider {
-  export interface Config extends StandardOAuthConfig {}
+  export interface Config extends StandardOAuthConfig {
+    preset: 'microsoft'
+  }
+
+  export const Config: z<Config> = z.intersect([
+    z.object({ preset: z.const('microsoft').required() }),
+    StandardOAuthConfig,
+  ])
 }
 
 export default MicrosoftProvider

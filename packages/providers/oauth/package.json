@@ -27,6 +27,9 @@
     "@cordisjs/plugin-timer": "^1.1.1",
     "cordis": "^4.0.0-rc.4"
   },
+  "dependencies": {
+    "schemastery": "^3.18.0"
+  },
   "devDependencies": {
     "@cordisjs/plugin-database": "^4.0.1",
     "@cordisjs/plugin-logger": "^1.0.2",

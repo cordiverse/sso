@@ -1,4 +1,5 @@
 import { OAuthBaseProvider, OAuthUserInfo, StandardOAuthConfig } from '../base'
+import z from 'schemastery'
 
 /**
  * Generic RFC 6749 OAuth 2 provider. For custom / self-hosted IdPs where the
@@ -35,6 +36,7 @@ class GenericProvider extends OAuthBaseProvider<GenericProvider.Config> {
 
 namespace GenericProvider {
   export interface Config extends StandardOAuthConfig {
+    preset: 'generic'
     name: string
     authorizeUrl: string
     tokenUrl: string
@@ -42,6 +44,18 @@ namespace GenericProvider {
     /** Optional: disable PKCE for IdPs that don't support it. Defaults to true. */
     pkce?: boolean
   }
+
+  export const Config: z<Config> = z.intersect([
+    z.object({
+      preset: z.const('generic').required(),
+      name: z.string().required().description('Provider 名称(出现在 /sso/callback/<name> 路由和 sso.oauth 表的 provider 列上)。'),
+      authorizeUrl: z.string().required().description('授权端点 URL。'),
+      tokenUrl: z.string().required().description('Token 交换端点 URL。'),
+      userInfoUrl: z.string().required().description('用户信息端点 URL。'),
+      pkce: z.boolean().default(true).description('是否启用 PKCE。'),
+    }),
+    StandardOAuthConfig,
+  ])
 }
 
 export default GenericProvider

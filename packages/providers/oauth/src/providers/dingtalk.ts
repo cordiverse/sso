@@ -1,4 +1,5 @@
 import { OAuthBaseProvider, OAuthTokenResponse, OAuthUserInfo, PkceEntry, StandardOAuthConfig, StateEntry } from '../base'
+import z from 'schemastery'
 
 class DingtalkProvider extends OAuthBaseProvider<DingtalkProvider.Config> {
   name = 'dingtalk'
@@ -51,7 +52,14 @@ class DingtalkProvider extends OAuthBaseProvider<DingtalkProvider.Config> {
 }
 
 namespace DingtalkProvider {
-  export interface Config extends StandardOAuthConfig {}
+  export interface Config extends StandardOAuthConfig {
+    preset: 'dingtalk'
+  }
+
+  export const Config: z<Config> = z.intersect([
+    z.object({ preset: z.const('dingtalk').required() }),
+    StandardOAuthConfig,
+  ])
 }
 
 export default DingtalkProvider

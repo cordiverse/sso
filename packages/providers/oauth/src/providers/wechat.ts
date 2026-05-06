@@ -1,4 +1,5 @@
 import { OAuthBaseConfig, OAuthBaseProvider, OAuthTokenResponse, OAuthUserInfo, PkceEntry, StateEntry } from '../base'
+import z from 'schemastery'
 
 class WeChatProvider extends OAuthBaseProvider<WeChatProvider.Config> {
   name = 'wechat'
@@ -75,9 +76,19 @@ class WeChatProvider extends OAuthBaseProvider<WeChatProvider.Config> {
 
 namespace WeChatProvider {
   export interface Config extends OAuthBaseConfig {
+    preset: 'wechat'
     appId: string
     appSecret: string
   }
+
+  export const Config: z<Config> = z.intersect([
+    z.object({
+      preset: z.const('wechat').required(),
+      appId: z.string().required().description('微信开放平台应用 AppID。'),
+      appSecret: z.string().required().role('secret').description('微信开放平台应用 AppSecret。'),
+    }),
+    OAuthBaseConfig,
+  ])
 }
 
 export default WeChatProvider

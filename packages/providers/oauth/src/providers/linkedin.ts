@@ -1,4 +1,5 @@
 import { OAuthBaseProvider, OAuthUserInfo, StandardOAuthConfig } from '../base'
+import z from 'schemastery'
 
 class LinkedinProvider extends OAuthBaseProvider<LinkedinProvider.Config> {
   name = 'linkedin'
@@ -21,7 +22,14 @@ class LinkedinProvider extends OAuthBaseProvider<LinkedinProvider.Config> {
 }
 
 namespace LinkedinProvider {
-  export interface Config extends StandardOAuthConfig {}
+  export interface Config extends StandardOAuthConfig {
+    preset: 'linkedin'
+  }
+
+  export const Config: z<Config> = z.intersect([
+    z.object({ preset: z.const('linkedin').required() }),
+    StandardOAuthConfig,
+  ])
 }
 
 export default LinkedinProvider
