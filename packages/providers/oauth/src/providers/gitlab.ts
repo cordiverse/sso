@@ -1,11 +1,12 @@
-import { OAuthBaseProvider, OAuthUserInfo, StandardOAuthConfig } from '../base'
+import { OAuthBaseProvider, OAuthUserInfo, SsoOAuth, StandardOAuthConfig } from '../base'
 
 class GitlabProvider extends OAuthBaseProvider<GitlabProvider.Config> {
   name = 'gitlab'
   protected readonly authorizeUrl = 'https://gitlab.com/oauth/authorize'
   protected readonly tokenUrl = 'https://gitlab.com/oauth/token'
-  protected get userInfoUrl() { return 'https://gitlab.com/api/v4/user' }
-  protected get scope() { return this.config.scope ?? 'read_user' }
+  protected readonly revokeUrl = 'https://gitlab.com/oauth/revoke'
+  protected readonly userInfoUrl = 'https://gitlab.com/api/v4/user'
+  protected readonly scope = this.config.scope ?? 'read_user'
 
   protected extractUser(data: any): OAuthUserInfo {
     return {
@@ -15,6 +16,23 @@ class GitlabProvider extends OAuthBaseProvider<GitlabProvider.Config> {
       email: data.email,
       avatar: data.avatar_url,
     }
+  }
+
+  // GitLab: RFC 7009 revoke; credentials sent in body.
+  protected async revokeGrant(row: SsoOAuth) {
+    const token = row.refreshToken ?? row.accessToken
+    if (!token) return
+    const res = await fetch(this.revokeUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: this.clientId,
+        client_secret: this.clientSecret,
+        token,
+        token_type_hint: row.refreshToken ? 'refresh_token' : 'access_token',
+      }),
+    })
+    if (!res.ok) throw new Error(`gitlab revoke failed: HTTP ${res.status}`)
   }
 }
 

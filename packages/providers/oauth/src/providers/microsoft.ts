@@ -4,8 +4,8 @@ class MicrosoftProvider extends OAuthBaseProvider<MicrosoftProvider.Config> {
   name = 'microsoft'
   protected readonly authorizeUrl = 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize'
   protected readonly tokenUrl = 'https://login.microsoftonline.com/common/oauth2/v2.0/token'
-  protected get userInfoUrl() { return 'https://graph.microsoft.com/v1.0/me' }
-  protected get scope() { return this.config.scope ?? 'openid email profile User.Read' }
+  protected readonly userInfoUrl = 'https://graph.microsoft.com/v1.0/me'
+  protected readonly scope = this.config.scope ?? 'openid email profile User.Read'
 
   protected override buildAuthorizeParams(
     redirectUri: string,
@@ -26,8 +26,10 @@ class MicrosoftProvider extends OAuthBaseProvider<MicrosoftProvider.Config> {
       email: data.email ?? data.mail ?? data.userPrincipalName ?? data.preferred_username,
     }
   }
-  // No revokeGrant — Microsoft doesn't expose a programmatic grant-revoke API;
-  // users must remove the app consent manually from their account settings.
+
+  // No revokeGrant — Microsoft Entra does not expose a per-app programmatic
+  // revoke. Admins can revoke tenant-wide via Graph, but there's no per-user
+  // consent-withdrawal endpoint. Users must remove the app from myapps.microsoft.com.
 }
 
 namespace MicrosoftProvider {

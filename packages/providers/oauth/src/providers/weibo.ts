@@ -1,12 +1,14 @@
-import { OAuthBaseProvider, OAuthTokenResponse, OAuthUserInfo, PkceEntry, StandardOAuthConfig, StateEntry } from '../base'
+import { OAuthBaseProvider, OAuthTokenResponse, OAuthUserInfo, PkceEntry, SsoOAuth, StandardOAuthConfig, StateEntry } from '../base'
 
 class WeiboProvider extends OAuthBaseProvider<WeiboProvider.Config> {
   name = 'weibo'
   protected readonly authorizeUrl = 'https://api.weibo.com/oauth2/authorize'
   protected readonly tokenUrl = 'https://api.weibo.com/oauth2/access_token'
-  protected get userInfoUrl() { return 'https://api.weibo.com/2/users/show.json' }
-  protected get scope() { return this.config.scope ?? '' }
-  protected override get usesPkce() { return false }
+  protected readonly revokeUrl = 'https://api.weibo.com/oauth2/revokeoauth2'
+  protected readonly userInfoUrl = 'https://api.weibo.com/2/users/show.json'
+  protected readonly scope = this.config.scope ?? ''
+
+  protected override readonly pkceMethod = false
 
   protected override async exchangeToken(
     code: string,
@@ -41,6 +43,13 @@ class WeiboProvider extends OAuthBaseProvider<WeiboProvider.Config> {
       avatar: user.avatar_large ?? user.profile_image_url,
       raw: user,
     }
+  }
+
+  // Weibo: GET /oauth2/revokeoauth2?access_token=<token>.
+  protected async revokeGrant(row: SsoOAuth) {
+    if (!row.accessToken) return
+    const res = await fetch(`${this.revokeUrl}?access_token=${encodeURIComponent(row.accessToken)}`)
+    if (!res.ok) throw new Error(`weibo revoke failed: HTTP ${res.status}`)
   }
 }
 

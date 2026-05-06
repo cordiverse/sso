@@ -4,8 +4,8 @@ class DingtalkProvider extends OAuthBaseProvider<DingtalkProvider.Config> {
   name = 'dingtalk'
   protected readonly authorizeUrl = 'https://login.dingtalk.com/oauth2/auth'
   protected readonly tokenUrl = 'https://api.dingtalk.com/v1.0/oauth2/userAccessToken'
-  protected get userInfoUrl() { return 'https://api.dingtalk.com/v1.0/contact/users/me' }
-  protected get scope() { return this.config.scope ?? 'openid' }
+  protected readonly userInfoUrl = 'https://api.dingtalk.com/v1.0/contact/users/me'
+  protected readonly scope = this.config.scope ?? 'openid'
 
   // DingTalk's token endpoint expects the body parameter in camelCase
   // (`grantType`) instead of the RFC 6749 `grant_type`, and uses its own
@@ -45,6 +45,9 @@ class DingtalkProvider extends OAuthBaseProvider<DingtalkProvider.Config> {
       unionId: data.unionId,
     }
   }
+
+  // No revokeGrant — DingTalk does not expose a programmatic grant-revoke API;
+  // users must disable the app from their workspace admin console.
 }
 
 namespace DingtalkProvider {

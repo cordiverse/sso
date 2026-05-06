@@ -4,11 +4,39 @@ class WeChatProvider extends OAuthBaseProvider<WeChatProvider.Config> {
   name = 'wechat'
   protected readonly authorizeUrl = 'https://open.weixin.qq.com/connect/qrconnect'
   protected readonly tokenUrl = 'https://api.weixin.qq.com/sns/oauth2/access_token'
-  protected get scope() { return this.config.scope ?? 'snsapi_login' }
-  protected override get usesPkce() { return false }
+  protected readonly scope = this.config.scope ?? 'snsapi_login'
 
   protected override get clientId() { return this.config.appId }
   protected override get clientSecret() { return this.config.appSecret }
+
+  protected override readonly pkceMethod = false
+
+  // WeChat's authorize URL uses `appid` (not `client_id`) and requires a
+  // `#wechat_redirect` fragment suffix. No PKCE.
+  protected override buildAuthorizeParams(
+    redirectUri: string,
+    state: string,
+    _link: { userId: number } | undefined,
+    _extras: Record<string, string>,
+  ): URLSearchParams {
+    return new URLSearchParams({
+      appid: this.config.appId,
+      redirect_uri: redirectUri,
+      response_type: 'code',
+      scope: this.scope,
+      state,
+    })
+  }
+
+  override async getAuthUrl(
+    redirectUri: string,
+    state: string,
+    link: { userId: number } | undefined,
+    ctx: any,
+  ): Promise<string> {
+    const url = await super.getAuthUrl(redirectUri, state, link, ctx)
+    return `${url}#wechat_redirect`
+  }
 
   protected override async exchangeToken(
     code: string,
@@ -41,32 +69,8 @@ class WeChatProvider extends OAuthBaseProvider<WeChatProvider.Config> {
     }
   }
 
-  // WeChat's authorize URL uses `appid` (not `client_id`) and requires a
-  // `#wechat_redirect` fragment suffix. No PKCE.
-  protected override buildAuthorizeParams(
-    redirectUri: string,
-    state: string,
-    _link: { userId: number } | undefined,
-    _extras: Record<string, string>,
-  ): URLSearchParams {
-    return new URLSearchParams({
-      appid: this.config.appId,
-      redirect_uri: redirectUri,
-      response_type: 'code',
-      scope: this.scope,
-      state,
-    })
-  }
-
-  override async getAuthUrl(
-    redirectUri: string,
-    state: string,
-    link: { userId: number } | undefined,
-    ctx: any,
-  ): Promise<string> {
-    const url = await super.getAuthUrl(redirectUri, state, link, ctx)
-    return `${url}#wechat_redirect`
-  }
+  // No revokeGrant — WeChat Open Platform does not expose a programmatic
+  // revoke endpoint; users must withdraw consent from the WeChat app settings.
 }
 
 namespace WeChatProvider {

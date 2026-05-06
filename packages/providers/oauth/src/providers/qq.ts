@@ -11,10 +11,11 @@ class QqProvider extends OAuthBaseProvider<QqProvider.Config> {
   protected readonly authorizeUrl = 'https://graph.qq.com/oauth2.0/authorize'
   protected readonly tokenUrl = 'https://graph.qq.com/oauth2.0/token'
   protected readonly scope = 'get_user_info'
-  protected override get usesPkce() { return false }
 
   protected override get clientId() { return this.config.appId }
   protected override get clientSecret() { return this.config.appKey }
+
+  protected override readonly pkceMethod = false
 
   // QQ's token endpoint uses query-string params and returns either a `callback(...)`
   // JSONP error payload or a URL-encoded form on success.
@@ -64,6 +65,9 @@ class QqProvider extends OAuthBaseProvider<QqProvider.Config> {
       raw: user,
     }
   }
+
+  // No revokeGrant — QQ Connect does not expose a programmatic revoke endpoint;
+  // users must revoke the app authorization from their QQ security console.
 }
 
 namespace QqProvider {

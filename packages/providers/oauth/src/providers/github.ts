@@ -4,8 +4,8 @@ class GithubProvider extends OAuthBaseProvider<GithubProvider.Config> {
   name = 'github'
   protected readonly authorizeUrl = 'https://github.com/login/oauth/authorize'
   protected readonly tokenUrl = 'https://github.com/login/oauth/access_token'
-  protected get userInfoUrl() { return 'https://api.github.com/user' }
-  protected get scope() { return this.config.scope ?? 'read:user user:email' }
+  protected readonly userInfoUrl = 'https://api.github.com/user'
+  protected readonly scope = this.config.scope ?? 'read:user user:email'
 
   protected extractUser(data: any): OAuthUserInfo {
     return {
@@ -17,13 +17,14 @@ class GithubProvider extends OAuthBaseProvider<GithubProvider.Config> {
     }
   }
 
+  // GitHub: DELETE /applications/:client_id/grant with Basic auth.
   protected async revokeGrant(row: SsoOAuth) {
     if (!row.accessToken) return
-    const auth = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64')
+    const basic = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64')
     const res = await fetch(`https://api.github.com/applications/${this.clientId}/grant`, {
       method: 'DELETE',
       headers: {
-        Authorization: `Basic ${auth}`,
+        Authorization: `Basic ${basic}`,
         Accept: 'application/vnd.github+json',
         'Content-Type': 'application/json',
       },

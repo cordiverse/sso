@@ -1,10 +1,11 @@
-import { OAuthBaseProvider, OAuthTokenResponse, OAuthUserInfo, PkceEntry, StandardOAuthConfig, StateEntry } from '../base'
+import { OAuthBaseProvider, OAuthTokenResponse, OAuthUserInfo, PkceEntry, SsoOAuth, StandardOAuthConfig, StateEntry } from '../base'
 
 class TwitterProvider extends OAuthBaseProvider<TwitterProvider.Config> {
   name = 'twitter'
   protected readonly authorizeUrl = 'https://twitter.com/i/oauth2/authorize'
   protected readonly tokenUrl = 'https://api.twitter.com/2/oauth2/token'
-  protected get scope() { return this.config.scope ?? 'tweet.read users.read offline.access' }
+  protected readonly revokeUrl = 'https://api.twitter.com/2/oauth2/revoke'
+  protected readonly scope = this.config.scope ?? 'tweet.read users.read offline.access'
 
   // Twitter uses HTTP Basic auth for client credentials and a form-encoded body.
   protected override async exchangeToken(
@@ -12,12 +13,12 @@ class TwitterProvider extends OAuthBaseProvider<TwitterProvider.Config> {
     redirectUri: string,
     entry: PkceEntry | StateEntry,
   ): Promise<OAuthTokenResponse> {
-    const basicAuth = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64')
+    const basic = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64')
     const res = await fetch(this.tokenUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
-        Authorization: `Basic ${basicAuth}`,
+        Authorization: `Basic ${basic}`,
       },
       body: new URLSearchParams({
         code,
@@ -42,6 +43,25 @@ class TwitterProvider extends OAuthBaseProvider<TwitterProvider.Config> {
       avatar: user.profile_image_url,
       raw: user,
     }
+  }
+
+  // Twitter: RFC 7009 revoke with Basic auth.
+  protected async revokeGrant(row: SsoOAuth) {
+    const token = row.refreshToken ?? row.accessToken
+    if (!token) return
+    const basic = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64')
+    const res = await fetch(this.revokeUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Authorization: `Basic ${basic}`,
+      },
+      body: new URLSearchParams({
+        token,
+        token_type_hint: row.refreshToken ? 'refresh_token' : 'access_token',
+      }),
+    })
+    if (!res.ok) throw new Error(`twitter revoke failed: HTTP ${res.status}`)
   }
 }
 

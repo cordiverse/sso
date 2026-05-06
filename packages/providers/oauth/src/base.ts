@@ -82,12 +82,6 @@ export interface OAuthCallbackParams {
  * provider bits (URLs, token-exchange shape, userInfo shape); the base
  * handles PKCE/state, the callback route, the shared `sso.oauth` table
  * plumbing, call-into-handleOAuthCallback, and unlink (with optional revoke).
- *
- * Configuration hooks read in `[Service.init]` (`usesPkce`, `pkceMethod`,
- * `callbackMethod`, and the credential getters) are exposed as getters,
- * not fields. Class-field initializers run AFTER `super()` returns, so
- * a field override in the subclass would land too late when the base
- * reads them during construction-adjacent setup.
  */
 @Inject('server')
 @Inject('timer')
@@ -100,27 +94,29 @@ export abstract class OAuthBaseProvider<C extends OAuthBaseConfig = OAuthBaseCon
   protected pkce?: PkceStore
   protected state?: StateStore
 
-  protected get callbackMethod(): 'GET' | 'POST' { return 'GET' }
-  protected get usesPkce(): boolean { return true }
-  protected get pkceMethod(): 'S256' | 'plain' { return 'S256' }
-
   abstract name: string
+
   protected abstract readonly authorizeUrl: string
   protected abstract readonly tokenUrl: string
   /** Only used by the default `fetchUserInfo`; OIDC subclasses that derive
    *  user info from `id_token` can leave it unset and override `fetchUserInfo`. */
-  protected get userInfoUrl(): string | undefined { return undefined }
+  protected readonly userInfoUrl?: string
   protected abstract readonly scope: string
 
-  protected get redirectUrl(): string | undefined { return this.config.redirectUrl }
-
-  /**
-   * The OAuth client credentials. Default reads `config.clientId` / `config.clientSecret`.
-   * Override (e.g. qq → `config.appId`, wechat → `config.appId`/`appSecret`) when the
-   * provider uses different credential field names.
-   */
+  /** OAuth client credentials. Getters so qq (`appId`/`appKey`) and wechat
+   *  (`appId`/`appSecret`) can remap without needing a constructor. */
   protected get clientId(): string { return (this.config as any).clientId }
   protected get clientSecret(): string { return (this.config as any).clientSecret }
+
+  /** `'S256'` | `'plain'` enables PKCE with that challenge method; `false`
+   *  disables PKCE entirely (falls back to the state store). */
+  protected readonly pkceMethod: 'S256' | 'plain' | false = 'S256'
+  protected readonly callbackMethod: 'GET' | 'POST' = 'GET'
+  /** Where the OAuth callback handler redirects the browser after success
+   *  (fragment-appended token) or error. Defaults to `ctx.server.baseUrl`;
+   *  a getter so `baseUrl` is read lazily (it may only settle once the server
+   *  plugin finishes listening). */
+  protected get redirectUrl(): string | undefined { return this.config.redirectUrl ?? this.ctx.server.baseUrl }
 
   constructor(ctx: Context, protected readonly config: C) {
     super(ctx)
@@ -129,11 +125,11 @@ export abstract class OAuthBaseProvider<C extends OAuthBaseConfig = OAuthBaseCon
   /**
    * Runs in the fiber-active phase, after subclass class-field initializers
    * have taken effect. Registers the PKCE/state store, the `sso.oauth` schema,
-   * and the callback route. `ctx.database.extend` is idempotent, so all 17
-   * sibling providers calling it with the same spec is fine.
+   * and the callback route. `ctx.database.extend` is idempotent, so all sibling
+   * providers calling it with the same spec is fine.
    */
   * [Service.init]() {
-    if (this.usesPkce) {
+    if (this.pkceMethod) {
       this.pkce = new PkceStore(this.ctx, { challengeMethod: this.pkceMethod })
     } else {
       this.state = new StateStore(this.ctx)
@@ -164,32 +160,73 @@ export abstract class OAuthBaseProvider<C extends OAuthBaseConfig = OAuthBaseCon
     yield this.ctx.sso.register(this)
   }
 
-  // --- Overridable hooks with sensible defaults -------------------------
+  /**
+   * Optional: override to place extra bits in the state payload (e.g. apple's
+   * nonce). Default is just `{ link }` if linking.
+   */
+  protected derivePayload(link: { userId: number } | undefined): any {
+    return link ? { link } : undefined
+  }
 
   /**
-   * Default: POST JSON to `tokenUrl` with the standard authorization_code body.
-   * Override for providers with non-standard token endpoints (ES256 JWT secret,
-   * Basic auth, query string, two-stage app-token, etc).
+   * Default: standard OAuth 2 authorize params. Subclasses can override to
+   * rename `client_id` → `app_id` / `appid`, add `nonce` / `response_mode`,
+   * or inject provider-specific fragment suffixes.
+   */
+  protected buildAuthorizeParams(
+    redirectUri: string,
+    state: string,
+    _link: { userId: number } | undefined,
+    extras: Record<string, string>,
+    _payload?: any,
+  ): URLSearchParams {
+    return new URLSearchParams({
+      response_type: 'code',
+      client_id: this.clientId,
+      redirect_uri: redirectUri,
+      state,
+      ...(this.scope ? { scope: this.scope } : {}),
+      ...extras,
+    })
+  }
+
+  /**
+   * Default: read `code` and `state` from the URL query. Apple and other
+   * form_post providers override to read the request body.
+   */
+  protected async readCallbackParams(req: Request): Promise<OAuthCallbackParams> {
+    const url = new URL(req.url, 'http://localhost')
+    return {
+      code: url.searchParams.get('code') ?? '',
+      state: url.searchParams.get('state') ?? '',
+    }
+  }
+
+  /**
+   * Default: POST `application/x-www-form-urlencoded` to `tokenUrl` with the
+   * RFC 6749 authorization_code body. Override for providers with non-standard
+   * token endpoints (ES256 JWT secret, Basic auth, query string, two-stage
+   * app-token, JSON bodies, etc).
    */
   protected async exchangeToken(
     code: string,
     redirectUri: string,
     entry: PkceEntry | StateEntry,
   ): Promise<OAuthTokenResponse> {
-    const body: Record<string, string> = {
+    const body = new URLSearchParams({
       grant_type: 'authorization_code',
       client_id: this.clientId,
       client_secret: this.clientSecret,
       code,
       redirect_uri: redirectUri,
-    }
+    })
     if ((entry as PkceEntry).codeVerifier) {
-      body.code_verifier = (entry as PkceEntry).codeVerifier
+      body.set('code_verifier', (entry as PkceEntry).codeVerifier)
     }
     const res = await fetch(this.tokenUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+      body,
     })
     return res.json() as Promise<OAuthTokenResponse>
   }
@@ -228,59 +265,15 @@ export abstract class OAuthBaseProvider<C extends OAuthBaseConfig = OAuthBaseCon
   }
 
   /**
-   * Default: read `code` and `state` from the URL query. Apple and other
-   * form_post providers override to read the request body.
-   */
-  protected async readCallbackParams(req: Request): Promise<OAuthCallbackParams> {
-    const url = new URL(req.url, 'http://localhost')
-    return {
-      code: url.searchParams.get('code') ?? '',
-      state: url.searchParams.get('state') ?? '',
-    }
-  }
-
-  /**
-   * Default: standard OAuth 2 authorize params. Subclasses can override to
-   * rename `client_id` → `app_id` / `appid`, add `nonce` / `response_mode`,
-   * or inject provider-specific fragment suffixes.
-   */
-  protected buildAuthorizeParams(
-    redirectUri: string,
-    state: string,
-    _link: { userId: number } | undefined,
-    extras: Record<string, string>,
-    _payload?: any,
-  ): URLSearchParams {
-    return new URLSearchParams({
-      response_type: 'code',
-      client_id: this.clientId,
-      redirect_uri: redirectUri,
-      state,
-      ...(this.scope ? { scope: this.scope } : {}),
-      ...extras,
-    })
-  }
-
-  /**
    * Optional: revoke the provider-side grant on unlink. If implemented and
    * throws, `unlink` fails with 502 REVOKE_FAILED. Should be idempotent (treat
    * 404 / already-revoked as success).
    */
   protected revokeGrant?(row: SsoOAuth): Promise<void>
 
-  /**
-   * Optional: override to place extra bits in the state payload (e.g. apple's
-   * nonce). Default is just `{ link }` if linking.
-   */
-  protected derivePayload(link: { userId: number } | undefined): any {
-    return link ? { link } : undefined
-  }
-
-  // --- Shared `sso.oauth` row ops (private — not overridable) -----------
-  //
-  // Every provider uses the shared table with identical logic; there's no
-  // override surface today. Kept private so that if a future subclass needs
-  // to write elsewhere, we promote deliberately instead of adding accidentally.
+  // Shared `sso.oauth` row ops. Private by design — every provider uses
+  // the shared table with identical logic. Promote to protected only when
+  // a concrete subclass genuinely needs a different table.
 
   private async resolveRow(externalId: string): Promise<{ identityId: number } | null> {
     const [row] = await this.ctx.database.get('sso.oauth', { provider: this.name, externalId })
@@ -338,7 +331,7 @@ export abstract class OAuthBaseProvider<C extends OAuthBaseConfig = OAuthBaseCon
     await db.remove('sso.oauth', { identityId })
   }
 
-  // --- Base implementation (not usually overridden) ---------------------
+  // Public entry points (not usually overridden)
 
   async getAuthUrl(
     redirectUri: string,

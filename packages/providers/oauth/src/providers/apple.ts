@@ -1,6 +1,6 @@
 import { createPrivateKey, createSign, randomBytes } from 'node:crypto'
 import type { Request } from '@cordisjs/plugin-server'
-import { OAuthBaseConfig, OAuthBaseProvider, OAuthCallbackParams, OAuthTokenResponse, OAuthUserInfo, PkceEntry, StateEntry } from '../base'
+import { OAuthBaseConfig, OAuthBaseProvider, OAuthCallbackParams, OAuthTokenResponse, OAuthUserInfo, PkceEntry, SsoOAuth, StateEntry } from '../base'
 import { decodeJwtPayload } from '../utils'
 import { ssoError } from '@cordisjs/plugin-sso'
 
@@ -28,13 +28,40 @@ class AppleProvider extends OAuthBaseProvider<AppleProvider.Config> {
   name = 'apple'
   protected readonly authorizeUrl = 'https://appleid.apple.com/auth/authorize'
   protected readonly tokenUrl = 'https://appleid.apple.com/auth/token'
+  protected readonly revokeUrl = 'https://appleid.apple.com/auth/revoke'
   protected readonly scope = 'name email'
-  protected override get usesPkce() { return false }
-  protected override get callbackMethod(): 'POST' { return 'POST' }
 
   protected override get clientId() { return this.config.clientId }
   // Apple uses a dynamically-generated ES256 JWT as the client secret.
   protected override get clientSecret() { return generateClientSecret(this.config) }
+
+  protected override readonly pkceMethod = false
+  protected override readonly callbackMethod = 'POST'
+
+  // Apple requires a nonce round-tripped through the state payload.
+  protected override derivePayload(link: { userId: number } | undefined) {
+    const nonce = randomBytes(16).toString('base64url')
+    return { nonce, ...(link ? { link } : {}) }
+  }
+
+  protected override buildAuthorizeParams(
+    redirectUri: string,
+    state: string,
+    _link: { userId: number } | undefined,
+    _extras: Record<string, string>,
+    payload?: any,
+  ): URLSearchParams {
+    const nonce = payload?.nonce
+    return new URLSearchParams({
+      client_id: this.clientId,
+      redirect_uri: redirectUri,
+      response_type: 'code id_token',
+      response_mode: 'form_post',
+      scope: this.scope,
+      state,
+      ...(nonce ? { nonce } : {}),
+    })
+  }
 
   // Apple delivers the callback as form_post. Read JSON body instead of query.
   protected override async readCallbackParams(req: Request): Promise<OAuthCallbackParams> {
@@ -84,29 +111,21 @@ class AppleProvider extends OAuthBaseProvider<AppleProvider.Config> {
     }
   }
 
-  // Apple requires a nonce round-tripped through the state payload.
-  protected override derivePayload(link: { userId: number } | undefined) {
-    const nonce = randomBytes(16).toString('base64url')
-    return { nonce, ...(link ? { link } : {}) }
-  }
-
-  protected override buildAuthorizeParams(
-    redirectUri: string,
-    state: string,
-    _link: { userId: number } | undefined,
-    _extras: Record<string, string>,
-    payload?: any,
-  ): URLSearchParams {
-    const nonce = payload?.nonce
-    return new URLSearchParams({
-      client_id: this.clientId,
-      redirect_uri: redirectUri,
-      response_type: 'code id_token',
-      response_mode: 'form_post',
-      scope: this.scope,
-      state,
-      ...(nonce ? { nonce } : {}),
+  // Apple: POST /auth/revoke with client_id + ES256 JWT secret + token.
+  protected async revokeGrant(row: SsoOAuth) {
+    const token = row.refreshToken ?? row.accessToken
+    if (!token) return
+    const res = await fetch(this.revokeUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: this.clientId,
+        client_secret: this.clientSecret,
+        token,
+        token_type_hint: row.refreshToken ? 'refresh_token' : 'access_token',
+      }),
     })
+    if (!res.ok) throw new Error(`apple revoke failed: HTTP ${res.status}`)
   }
 
   private parseUserName(userJson: any): string | undefined {

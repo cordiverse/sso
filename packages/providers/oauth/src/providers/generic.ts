@@ -11,12 +11,13 @@ import { OAuthBaseProvider, OAuthUserInfo, StandardOAuthConfig } from '../base'
  * match, either massage the response upstream or fork into a new subclass.
  */
 class GenericProvider extends OAuthBaseProvider<GenericProvider.Config> {
-  get name() { return this.config.name }
-  protected get authorizeUrl() { return this.config.authorizeUrl }
-  protected get tokenUrl() { return this.config.tokenUrl }
-  protected get userInfoUrl() { return this.config.userInfoUrl }
-  protected get scope() { return this.config.scope ?? '' }
-  protected override get usesPkce() { return this.config.pkce !== false }
+  readonly name = this.config.name
+  protected readonly authorizeUrl = this.config.authorizeUrl
+  protected readonly tokenUrl = this.config.tokenUrl
+  protected readonly userInfoUrl = this.config.userInfoUrl
+  protected readonly scope = this.config.scope ?? ''
+
+  protected override readonly pkceMethod = this.config.pkce === false ? false : 'S256'
 
   protected extractUser(data: any): OAuthUserInfo {
     return {
@@ -27,6 +28,9 @@ class GenericProvider extends OAuthBaseProvider<GenericProvider.Config> {
       avatar: data.avatar_url ?? data.avatar ?? data.picture,
     }
   }
+
+  // No revokeGrant — there's no standard revoke URL to call without more config;
+  // if the IdP supports RFC 7009, fork into a dedicated subclass.
 }
 
 namespace GenericProvider {

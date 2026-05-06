@@ -4,8 +4,8 @@ class LinkedinProvider extends OAuthBaseProvider<LinkedinProvider.Config> {
   name = 'linkedin'
   protected readonly authorizeUrl = 'https://www.linkedin.com/oauth/v2/authorization'
   protected readonly tokenUrl = 'https://www.linkedin.com/oauth/v2/accessToken'
-  protected get userInfoUrl() { return 'https://api.linkedin.com/v2/userinfo' }
-  protected get scope() { return this.config.scope ?? 'openid email profile' }
+  protected readonly userInfoUrl = 'https://api.linkedin.com/v2/userinfo'
+  protected readonly scope = this.config.scope ?? 'openid email profile'
 
   protected extractUser(data: any): OAuthUserInfo {
     return {
@@ -15,6 +15,9 @@ class LinkedinProvider extends OAuthBaseProvider<LinkedinProvider.Config> {
       avatar: data.picture,
     }
   }
+
+  // No revokeGrant — LinkedIn does not expose a programmatic revoke endpoint;
+  // users must remove the app grant via linkedin.com/psettings/permitted-services.
 }
 
 namespace LinkedinProvider {

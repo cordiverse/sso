@@ -9,6 +9,7 @@ import AppleProvider from './providers/apple'
 import DingtalkProvider from './providers/dingtalk'
 import DiscordProvider from './providers/discord'
 import FacebookProvider from './providers/facebook'
+import FeishuProvider from './providers/feishu'
 import GenericProvider from './providers/generic'
 import GiteeProvider from './providers/gitee'
 import GithubProvider from './providers/github'
@@ -36,6 +37,7 @@ export type Config =
   | ({ preset: 'dingtalk' } & DingtalkProvider.Config)
   | ({ preset: 'discord' } & DiscordProvider.Config)
   | ({ preset: 'facebook' } & FacebookProvider.Config)
+  | ({ preset: 'feishu' } & FeishuProvider.Config)
   | ({ preset: 'generic' } & GenericProvider.Config)
   | ({ preset: 'gitee' } & GiteeProvider.Config)
   | ({ preset: 'github' } & GithubProvider.Config)
@@ -55,6 +57,7 @@ const providers = {
   dingtalk: DingtalkProvider,
   discord: DiscordProvider,
   facebook: FacebookProvider,
+  feishu: FeishuProvider,
   generic: GenericProvider,
   gitee: GiteeProvider,
   github: GithubProvider,
