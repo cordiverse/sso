@@ -1,6 +1,6 @@
 {
   "name": "@cordisjs/plugin-sso-server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "HTTP routes for SSO",
   "type": "module",
   "main": "lib/index.js",
@@ -21,17 +21,17 @@
   "homepage": "https://github.com/cordiverse/sso",
   "peerDependencies": {
     "@cordisjs/plugin-server": "^1.6.1",
-    "@cordisjs/plugin-sso": "^0.1.0",
+    "@cordisjs/plugin-sso": "^0.2.0",
     "cordis": "^4.0.0-rc.4"
   },
   "devDependencies": {
     "@cordisjs/plugin-database": "^4.0.1",
     "@cordisjs/plugin-database-memory": "^4.0.0",
     "@cordisjs/plugin-server": "^1.6.1",
-    "@cordisjs/plugin-sso": "^0.1.0",
-    "@cordisjs/plugin-sso-mail": "^0.1.0",
-    "@cordisjs/plugin-sso-password": "^0.1.0",
-    "@cordisjs/plugin-sso-totp": "^0.1.0",
+    "@cordisjs/plugin-sso": "^0.2.0",
+    "@cordisjs/plugin-sso-mail": "^0.2.0",
+    "@cordisjs/plugin-sso-password": "^0.2.0",
+    "@cordisjs/plugin-sso-totp": "^0.2.0",
     "@cordisjs/plugin-timer": "^1.1.1",
     "cordis": "^4.0.0-rc.4"
   }

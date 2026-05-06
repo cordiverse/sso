@@ -13,7 +13,7 @@
   "license": "MIT",
   "scripts": {
     "yakumo": "yakumo --import tsx --import @cordisjs/unyaml",
-    "build": "yarn yakumo esbuild && yarn yakumo tsc",
+    "build": "yarn yakumo esbuild && yarn yakumo tsc && yarn yakumo client",
     "lint": "eslint --cache",
     "test": "yarn yakumo vitest --import tsx",
     "test:text": "shx rm -rf coverage && yarn test --coverage --coverage.reporter text",
@@ -21,6 +21,7 @@
     "test:html": "shx rm -rf coverage && yarn test --coverage --coverage.reporter html"
   },
   "devDependencies": {
+    "@cordisjs/client": "^0.6.3",
     "@cordisjs/eslint-config": "^1.1.1",
     "@cordisjs/unyaml": "^2.0.3",
     "@types/node": "^25.3.5",
