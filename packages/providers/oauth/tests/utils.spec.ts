@@ -2,13 +2,13 @@ import { Context } from 'cordis'
 import Timer from '@cordisjs/plugin-timer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
-import { callbackResponse, decodeJwtPayload, PkceStore, StateStore } from '../src'
+import { callbackResponse, decodeJwtPayload, PkceStore, StateStore } from '../src/utils'
 
 function sleep(ms = 0) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms))
 }
 
-describe('@cordisjs/oauth-utils', () => {
+describe('sso-oauth utils', () => {
   describe('decodeJwtPayload', () => {
     function makeJwt(payload: any): string {
       const enc = (o: any) => Buffer.from(JSON.stringify(o)).toString('base64url')
@@ -122,7 +122,6 @@ describe('@cordisjs/oauth-utils', () => {
       const store = new PkceStore(ctx, { ttl: 1000 })
       const { state } = store.issue('https://app/callback')
       vi.advanceTimersByTime(1500)
-      // ctx.timeout fires the cleanup; even if it didn't, consume() rejects expired
       expect(store.consume(state)).to.be.undefined
       expect(store.size).to.equal(0)
     })

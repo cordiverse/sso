@@ -20,7 +20,6 @@
   },
   "homepage": "https://github.com/cordiverse/sso",
   "peerDependencies": {
-    "@cordisjs/oauth-utils": "^0.1.0",
     "@cordisjs/plugin-database": "^4.0.1",
     "@cordisjs/plugin-logger": "^1.0.2",
     "@cordisjs/plugin-server": "^1.6.1",
@@ -29,7 +28,6 @@
     "cordis": "^4.0.0-rc.4"
   },
   "devDependencies": {
-    "@cordisjs/oauth-utils": "^0.1.0",
     "@cordisjs/plugin-database": "^4.0.1",
     "@cordisjs/plugin-logger": "^1.0.2",
     "@cordisjs/plugin-server": "^1.6.1",
