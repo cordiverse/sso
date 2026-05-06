@@ -384,9 +384,6 @@ export abstract class OAuthBaseProvider<C extends OAuthBaseConfig = OAuthBaseCon
       const userInfo = await this.fetchUserInfo(tokenData, extra, entry.payload)
 
       const existing = await this.resolveRow(userInfo.externalId)
-      if (existing) {
-        await this.updateRow(existing.identityId, tokenData, userInfo)
-      }
 
       return await handleOAuthCallback({
         ctx: this.ctx,
@@ -394,10 +391,20 @@ export abstract class OAuthBaseProvider<C extends OAuthBaseConfig = OAuthBaseCon
         jitProvisioning: this.jitProvisioning,
         linkUserId,
         resolveResult: existing,
-        display: userInfo.display,
+        // Fall back to the OAuth handle when seeding `sso.user.display` for a
+        // new user / fresh link — but keep `userInfo.display` raw for the
+        // snapshot in `sso.oauth` so we don't clobber a richer label there.
+        display: userInfo.display ?? userInfo.name,
         registerFn: async (identityId, db) => {
           await this.writeRow(identityId, db, tokenData, userInfo)
         },
+        // Refresh the existing row only when handleOAuthCallback decides to
+        // actually reuse this identity (login or same-user re-link). On
+        // ALREADY_LINKED rejection this never runs, so we don't silently
+        // touch a stranger's row.
+        updateFn: existing
+          ? async () => this.updateRow(existing.identityId, tokenData, userInfo)
+          : undefined,
         redirectUrl: this.redirectUrl,
       })
     } catch (e) {

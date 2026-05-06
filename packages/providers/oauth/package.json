@@ -1,6 +1,6 @@
 {
   "name": "@cordisjs/plugin-sso-oauth",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Generic OAuth 2.0 provider for SSO (GitHub, Google, Lark, etc.)",
   "type": "module",
   "main": "lib/index.js",

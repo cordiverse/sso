@@ -1,7 +1,7 @@
 import { Context } from 'cordis'
 import { createHash, randomBytes } from 'node:crypto'
 import type { Database } from '@cordisjs/plugin-database'
-import type {} from '@cordisjs/plugin-database'
+import { $ } from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-sso'
 import type {} from '@cordisjs/plugin-timer'
 
@@ -229,6 +229,11 @@ export async function handleOAuthCallback(options: {
   linkUserId?: number
   resolveResult: { identityId: number } | null
   registerFn: (identityId: number, db: Database) => Promise<void>
+  // Called when we're about to reuse an existing identity (login or
+  // same-user re-link) to refresh the per-identity snapshot (tokens,
+  // display, avatar). Skipped on ALREADY_LINKED so we don't touch a
+  // stranger's row.
+  updateFn?: () => Promise<void>
   // Human-readable hint used as the initial value for sso.user.display on
   // first registration. For link-to-existing-user, only written if the
   // target user has no display yet (so connecting a new OAuth provider
@@ -236,7 +241,7 @@ export async function handleOAuthCallback(options: {
   display?: string
   redirectUrl?: string
 }): Promise<Response> {
-  const { ctx, providerName, jitProvisioning, linkUserId, resolveResult, registerFn, display, redirectUrl } = options
+  const { ctx, providerName, jitProvisioning, linkUserId, resolveResult, registerFn, updateFn, display, redirectUrl } = options
 
   // Link intent — attach to the logged-in user.
   if (linkUserId) {
@@ -246,8 +251,9 @@ export async function handleOAuthCallback(options: {
         // The provider account is already linked to a different user; refuse.
         return callbackResponse({ error: 'ALREADY_LINKED', status: 409 }, redirectUrl)
       }
-      // Same user — the credential was already theirs. Nothing new to write;
-      // mint a fresh session so the caller gets a usable token.
+      // Same user — the credential was already theirs. Refresh the snapshot
+      // and mint a fresh session.
+      await updateFn?.()
       const token = await ctx.sso.createSession(identity.userId, identity.id)
       return callbackResponse({ token }, redirectUrl)
     }
@@ -255,10 +261,12 @@ export async function handleOAuthCallback(options: {
       const linked = await ctx.sso.link(linkUserId, providerName, db)
       await registerFn(linked.identityId, db)
       if (display) {
-        const [owner] = await db.get('sso.user', { id: linkUserId })
-        if (owner && !owner.display) {
-          await db.set('sso.user', { id: linkUserId }, { display })
-        }
+        // Atomic seed: only set sso.user.display if it's currently null.
+        // `$.ifNull(row.display, display)` returns the existing value when set,
+        // else the new one — so no read-then-write race.
+        await db.set('sso.user', { id: linkUserId }, row => ({
+          display: $.ifNull(row.display, display),
+        }))
       }
       return linked.identityId
     })
@@ -269,6 +277,7 @@ export async function handleOAuthCallback(options: {
   // Normal login path — identity already exists.
   if (resolveResult) {
     const identity = await ctx.sso.getIdentity(resolveResult.identityId)
+    await updateFn?.()
     const token = await ctx.sso.createSession(identity!.userId, identity!.id)
     return callbackResponse({ token }, redirectUrl)
   }
