@@ -56,6 +56,7 @@ export default class SmsProvider extends ChallengeProvider<SmsInit, SmsComplete,
   canStepUp = true
   jitProvisioning: boolean
   interactive = true
+  multipleIdentities = true
 
   private codeLength: number
   private templateId: string

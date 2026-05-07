@@ -7,6 +7,7 @@ export interface ProviderMeta {
   canStepUp: boolean
   jitProvisioning: boolean
   interactive: boolean
+  multipleIdentities: boolean
 }
 
 export interface User {

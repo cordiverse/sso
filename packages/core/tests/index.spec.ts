@@ -22,13 +22,14 @@ class FakeProvider extends SsoProvider {
   name: string
   category = 'credentials' as const
 
-  constructor(ctx: Context, config: { name: string; interactive?: boolean; jitProvisioning?: boolean; canBePrimary?: boolean; canStepUp?: boolean }) {
+  constructor(ctx: Context, config: { name: string; interactive?: boolean; jitProvisioning?: boolean; canBePrimary?: boolean; canStepUp?: boolean; multipleIdentities?: boolean }) {
     super(ctx)
     this.name = config.name
     this.interactive = config.interactive ?? false
     this.jitProvisioning = config.jitProvisioning ?? false
     this.canBePrimary = config.canBePrimary ?? true
     this.canStepUp = config.canStepUp ?? false
+    this.multipleIdentities = config.multipleIdentities ?? false
   }
 
   async step() {
@@ -180,12 +181,12 @@ describe('@cordisjs/plugin-sso', () => {
 
     it('returns category + capability flags in the base projection', async () => {
       await ctx.plugin(FakeProvider, { name: 'a', interactive: true, jitProvisioning: false })
-      await ctx.plugin(FakeProvider, { name: 'b', interactive: false, jitProvisioning: true, canBePrimary: false, canStepUp: true })
+      await ctx.plugin(FakeProvider, { name: 'b', interactive: false, jitProvisioning: true, canBePrimary: false, canStepUp: true, multipleIdentities: true })
       const metas = await ctx.sso.getProviderMetas()
       expect(metas).to.have.length(2)
       const byName = Object.fromEntries(metas.map(m => [m.name, m]))
-      expect(byName.a).to.deep.equal({ name: 'a', category: 'credentials', canBePrimary: true, canStepUp: false, jitProvisioning: false, interactive: true })
-      expect(byName.b).to.deep.equal({ name: 'b', category: 'credentials', canBePrimary: false, canStepUp: true, jitProvisioning: true, interactive: false })
+      expect(byName.a).to.deep.equal({ name: 'a', category: 'credentials', canBePrimary: true, canStepUp: false, jitProvisioning: false, interactive: true, multipleIdentities: false })
+      expect(byName.b).to.deep.equal({ name: 'b', category: 'credentials', canBePrimary: false, canStepUp: true, jitProvisioning: true, interactive: false, multipleIdentities: true })
     })
 
     it('listeners can augment via next()', async () => {

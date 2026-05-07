@@ -112,11 +112,10 @@ const challengeRefs = reactive<Record<string, any>>({})
 const boundProviders = computed(() => new Set(identities.value.map(i => i.provider)))
 const allProviders = computed(() => rpc.value?.providers ?? [])
 
-// credentials/challenge/redirect: one identity per provider usually (we hide
-// once bound). webauthn is the exception — multiple passkeys per user.
+// Providers with `multipleIdentities = true` (mail/sms/totp/webauthn) can be
+// bound repeatedly; the rest are hidden once the user has a binding.
 function isBindable(p: ProviderMeta) {
-  if (p.name === 'webauthn') return true
-  if (p.name === 'totp') return true
+  if (p.multipleIdentities) return true
   return !boundProviders.value.has(p.name)
 }
 

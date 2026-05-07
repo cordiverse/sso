@@ -56,6 +56,7 @@ export default class MailProvider extends ChallengeProvider<MailInit, MailComple
   canStepUp = true
   jitProvisioning: boolean
   interactive = true
+  multipleIdentities = true
 
   private codeLength: number
   private templateId: string

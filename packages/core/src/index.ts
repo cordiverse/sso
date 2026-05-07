@@ -66,6 +66,7 @@ export abstract class SsoProvider {
   canStepUp = false
   jitProvisioning = false
   interactive = true
+  multipleIdentities = false
 
   constructor(public ctx: Context) {}
 
@@ -323,6 +324,7 @@ export namespace Sso {
     canStepUp: boolean
     jitProvisioning: boolean
     interactive: boolean
+    multipleIdentities: boolean
   }
 
   export interface StepupEntry {
@@ -404,6 +406,7 @@ export class Sso extends Service {
       canStepUp: p.canStepUp,
       jitProvisioning: p.jitProvisioning,
       interactive: p.interactive,
+      multipleIdentities: p.multipleIdentities,
     }))
     return this.ctx.waterfall('sso/provider-meta', base, () => base)
   }
