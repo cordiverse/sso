@@ -1,5 +1,6 @@
 import { Context } from 'cordis'
 import type {} from '@cordisjs/plugin-sso'
+import z from 'schemastery'
 
 export type CaptchaType = 'recaptcha' | 'hcaptcha' | 'turnstile'
 
@@ -15,6 +16,18 @@ export interface Config {
   /** Minimum score threshold for reCAPTCHA v3 (0.0 - 1.0, default: 0.5) */
   minScore?: number
 }
+
+export const Config: z<Config> = z.object({
+  type: z.union([
+    z.const('recaptcha').required(),
+    z.const('hcaptcha').required(),
+    z.const('turnstile').required(),
+  ] as const).description('CAPTCHA 服务提供方。'),
+  siteKey: z.string().required().description('站点密钥（前端可见）。'),
+  secretKey: z.string().required().role('secret').description('服务端密钥。'),
+  providers: z.array(z.string()).description('仅对这些 SSO provider 生效，为空则全部生效。'),
+  minScore: z.number().min(0).max(1).default(0.5).description('reCAPTCHA v3 的最低分数阈值。'),
+})
 
 declare module '@cordisjs/plugin-sso' {
   namespace Sso {

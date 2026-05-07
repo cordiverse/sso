@@ -3,9 +3,14 @@ import type { Sso } from '@cordisjs/plugin-sso'
 import {} from '@cordisjs/plugin-sso'
 import { Request } from '@cordisjs/plugin-server'
 import type {} from '@cordisjs/plugin-database'
+import z from 'schemastery'
 
 export const name = 'sso-server'
 export const inject = ['sso', 'server', 'database']
+
+export interface Config {}
+
+export const Config: z<Config> = z.object({})
 
 export function apply(ctx: Context) {
   ctx.server.get('/sso/providers', async () => {

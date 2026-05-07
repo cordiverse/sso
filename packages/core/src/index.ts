@@ -4,6 +4,7 @@ import type { Database } from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-timer'
 import type {} from '@cordisjs/plugin-logger'
 import { randomUUID } from 'node:crypto'
+import z from 'schemastery'
 
 declare module 'cordis' {
   interface Context {
@@ -334,6 +335,10 @@ export namespace Sso {
 
 @Inject('database')
 export class Sso extends Service {
+  static Config: z<Sso.Config> = z.object({
+    sessionMaxAge: z.natural().default(7 * 24 * 60 * 60 * 1000).description('会话有效期（毫秒）。'),
+  })
+
   private _providers = new Map<string, SsoProvider>()
   private _stepups = new Map<string, Sso.StepupEntry>()
 

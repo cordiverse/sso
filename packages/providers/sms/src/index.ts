@@ -1,9 +1,10 @@
-import { Context } from 'cordis'
+import { Context, Inject } from 'cordis'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { ChallengeProvider, Sso, ssoError } from '@cordisjs/plugin-sso'
 import type { Database } from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-timer'
 import type {} from '@cordisjs/sms'
+import z from 'schemastery'
 
 function randomDigits(length: number): string {
   return Array.from(randomBytes(length), (b) => (b % 10).toString()).join('')
@@ -21,10 +22,11 @@ export interface SsoSms {
 }
 
 export interface Config {
+  /** Logical template name registered on the configured `ctx.sms` driver. The provider passes `{ code }` as the template variables. */
+  templateId: string
   codeExpiry?: number
   codeLength?: number
   jitProvisioning?: boolean
-  template?: string
 }
 
 interface SmsInit {
@@ -40,7 +42,15 @@ interface SmsExtra {
   code: string
 }
 
+@Inject('sms')
 export default class SmsProvider extends ChallengeProvider<SmsInit, SmsComplete, SmsExtra> {
+  static Config: z<Config> = z.object({
+    templateId: z.string().default('sso.otp').description('ctx.sms 上注册的模板名，占位符可用 `{ code }`。'),
+    codeExpiry: z.natural().default(5 * 60 * 1000).description('验证码有效期（毫秒）。'),
+    codeLength: z.natural().default(6).description('验证码位数。'),
+    jitProvisioning: z.boolean().default(true).description('登录未命中时自动注册。'),
+  })
+
   name = 'sms'
   canBePrimary = true
   canStepUp = true
@@ -48,14 +58,14 @@ export default class SmsProvider extends ChallengeProvider<SmsInit, SmsComplete,
   interactive = true
 
   private codeLength: number
-  private template: string
+  private templateId: string
 
-  constructor(ctx: Context, config: Config = {}) {
+  constructor(ctx: Context, config: Config) {
     super(ctx)
     this.challengeTtl = config.codeExpiry ?? 5 * 60 * 1000
     this.codeLength = config.codeLength ?? 6
     this.jitProvisioning = config.jitProvisioning ?? true
-    this.template = config.template ?? 'Your verification code is {code}'
+    this.templateId = config.templateId
 
     ctx.database.extend('sso.sms', {
       identityId: 'unsigned(8)',
@@ -72,8 +82,7 @@ export default class SmsProvider extends ChallengeProvider<SmsInit, SmsComplete,
     if (!phone) throw ssoError(400, 'INVALID_REQUEST')
     const code = randomDigits(this.codeLength)
     const challengeId = randomUUID()
-    const message = this.template.replace('{code}', code)
-    await this.ctx.sms.send(phone, message)
+    await this.ctx.sms.sendTemplate(phone, this.templateId, { code })
     return {
       challengeId,
       response: { shape: 'code' as const, length: this.codeLength, digits: true },

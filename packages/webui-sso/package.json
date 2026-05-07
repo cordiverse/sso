@@ -55,7 +55,7 @@
     "@cordisjs/plugin-webui": "^0.6.3",
     "@simplewebauthn/browser": "^13.1.0",
     "@types/qrcode": "^1.5.5",
-    "qrcode": "^1.5.4",
-    "cordis": "^4.0.0-rc.4"
+    "cordis": "^4.0.0-rc.4",
+    "qrcode": "^1.5.4"
   }
 }

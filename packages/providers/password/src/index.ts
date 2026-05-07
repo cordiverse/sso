@@ -2,6 +2,7 @@ import { Context } from 'cordis'
 import { createHash, randomBytes } from 'node:crypto'
 import { CredentialsProvider, ssoError } from '@cordisjs/plugin-sso'
 import type { Database } from '@cordisjs/plugin-database'
+import z from 'schemastery'
 
 declare module '@cordisjs/plugin-database' {
   interface Tables {
@@ -30,6 +31,11 @@ function hashPassword(password: string, salt: string, algorithm = 'sha256'): str
 }
 
 export default class PasswordProvider extends CredentialsProvider<PasswordCreds> {
+  static Config: z<Config> = z.object({
+    minLength: z.natural().default(8).description('密码最小长度。'),
+    algorithm: z.string().default('sha256').description('密码哈希算法。'),
+  })
+
   name = 'password'
   canBePrimary = true
   canStepUp = false

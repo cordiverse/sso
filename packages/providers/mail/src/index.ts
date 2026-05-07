@@ -1,8 +1,10 @@
-import { Context } from 'cordis'
+import { Context, Inject } from 'cordis'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { ChallengeProvider, Sso, ssoError } from '@cordisjs/plugin-sso'
 import type { Database } from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-timer'
+import type {} from '@cordisjs/mail'
+import z from 'schemastery'
 
 function randomDigits(length: number): string {
   return Array.from(randomBytes(length), (b) => (b % 10).toString()).join('')
@@ -20,7 +22,8 @@ export interface SsoMail {
 }
 
 export interface Config {
-  send: (email: string, code: string) => Promise<void>
+  /** Logical template name registered on the configured `ctx.mail` driver. The provider passes `{ code, email }` as the template variables. */
+  templateId: string
   codeExpiry?: number
   codeLength?: number
   jitProvisioning?: boolean
@@ -39,7 +42,15 @@ interface MailExtra {
   code: string
 }
 
+@Inject('mail')
 export default class MailProvider extends ChallengeProvider<MailInit, MailComplete, MailExtra> {
+  static Config: z<Config> = z.object({
+    templateId: z.string().default('sso.otp').description('ctx.mail 上注册的模板名，占位符可用 `{ code, email }`。'),
+    codeExpiry: z.natural().default(5 * 60 * 1000).description('验证码有效期（毫秒）。'),
+    codeLength: z.natural().default(6).description('验证码位数。'),
+    jitProvisioning: z.boolean().default(true).description('登录未命中时自动注册。'),
+  })
+
   name = 'mail'
   canBePrimary = true
   canStepUp = true
@@ -47,14 +58,14 @@ export default class MailProvider extends ChallengeProvider<MailInit, MailComple
   interactive = true
 
   private codeLength: number
-  private send: (email: string, code: string) => Promise<void>
+  private templateId: string
 
   constructor(ctx: Context, config: Config) {
     super(ctx)
     this.challengeTtl = config.codeExpiry ?? 5 * 60 * 1000
     this.codeLength = config.codeLength ?? 6
     this.jitProvisioning = config.jitProvisioning ?? true
-    this.send = config.send
+    this.templateId = config.templateId
 
     ctx.database.extend('sso.mail', {
       identityId: 'unsigned(8)',
@@ -71,7 +82,7 @@ export default class MailProvider extends ChallengeProvider<MailInit, MailComple
     if (!email) throw ssoError(400, 'INVALID_REQUEST')
     const code = randomDigits(this.codeLength)
     const challengeId = randomUUID()
-    await this.send(email, code)
+    await this.ctx.mail.sendTemplate(email, this.templateId, { code, email })
     return {
       challengeId,
       response: { shape: 'code' as const, length: this.codeLength, digits: true },

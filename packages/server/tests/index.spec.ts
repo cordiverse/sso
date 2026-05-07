@@ -7,7 +7,10 @@ import Timer from '@cordisjs/plugin-timer'
 import Sso, { CredentialsProvider, RedirectProvider, SsoProvider } from '@cordisjs/plugin-sso'
 import Password from '@cordisjs/plugin-sso-password'
 import Mail from '@cordisjs/plugin-sso-mail'
+import Sms from '@cordisjs/plugin-sso-sms'
 import Totp from '@cordisjs/plugin-sso-totp'
+import MockMail from '@cordisjs/plugin-mail-mock'
+import MockSms from '@cordisjs/plugin-sms-mock'
 import { afterEach, describe, expect, it } from 'vitest'
 import { name, inject, apply } from '../src'
 const SsoServer = { name, inject, apply }
@@ -34,9 +37,12 @@ class OAuthFakeProvider extends RedirectProvider {
 }
 
 const mailbox: { email: string; code: string }[] = []
+const smsbox: { phone: string; code: string }[] = []
 
 async function setup() {
   const ctx = new Context()
+  const mailbox: { email: string; code: string }[] = []
+  const smsbox: { phone: string; code: string }[] = []
   await ctx.plugin(Logger)
   await ctx.plugin(Database)
   await ctx.plugin(MemoryDriver)
@@ -45,10 +51,19 @@ async function setup() {
   await ctx.plugin(Sso)
   await ctx.plugin(Password)
   await ctx.plugin(Totp)
-  await ctx.plugin(Mail, { send: async (email, code) => { mailbox.push({ email, code }) } })
+  await ctx.plugin(MockMail, { from: 'test@test.local' })
+  await ctx.plugin(Mail)
+  await ctx.plugin(MockSms)
+  await ctx.plugin(Sms)
   await ctx.plugin(SsoServer)
+  ctx.on('mail/mock/template', (to, _templateId, variables) => {
+    mailbox.push({ email: to, code: String(variables.code) })
+  })
+  ctx.on('sms/mock/template', (to, _templateId, variables) => {
+    smsbox.push({ phone: to, code: String(variables.code) })
+  })
   await sleep()
-  return { ctx, baseUrl: ctx.server.baseUrl }
+  return { ctx, baseUrl: ctx.server.baseUrl, mailbox, smsbox }
 }
 
 async function teardown(ctx: Context) {
@@ -83,6 +98,8 @@ async function loginAndGetToken(baseUrl: string, username: string, password: str
 describe('@cordisjs/plugin-sso-server', () => {
   let ctx: Context
   let baseUrl: string
+  let mailbox: { email: string; code: string }[]
+  let smsbox: { phone: string; code: string }[]
 
   afterEach(async () => {
     if (ctx) await teardown(ctx)
@@ -95,7 +112,7 @@ describe('@cordisjs/plugin-sso-server', () => {
       expect(res.status).to.equal(200)
       const body = await res.json() as any[]
       const names = body.map(p => p.name).sort()
-      expect(names).to.deep.equal(['mail', 'password', 'totp'])
+      expect(names).to.deep.equal(['mail', 'password', 'sms', 'totp'])
       const password = body.find(p => p.name === 'password')
       expect(password).to.include({ category: 'credentials', canBePrimary: true, canStepUp: false, jitProvisioning: false })
       const mail = body.find(p => p.name === 'mail')
@@ -218,8 +235,7 @@ describe('@cordisjs/plugin-sso-server', () => {
 
   describe('POST /sso/sessions/mail (challenge → finish)', () => {
     it('unknown email jitProvisionings in one flow', async () => {
-      ({ ctx, baseUrl } = await setup())
-      mailbox.length = 0
+      ({ ctx, baseUrl, mailbox } = await setup())
       const step1 = await fetch(`${baseUrl}/sso/sessions/mail`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -244,8 +260,7 @@ describe('@cordisjs/plugin-sso-server', () => {
     })
 
     it('wrong code → VERIFICATION_FAILED (pending not consumed)', async () => {
-      ({ ctx, baseUrl } = await setup())
-      mailbox.length = 0
+      ({ ctx, baseUrl, mailbox } = await setup())
       const step1 = await fetch(`${baseUrl}/sso/sessions/mail`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -269,8 +284,7 @@ describe('@cordisjs/plugin-sso-server', () => {
     })
 
     it('replayed challengeId → CHALLENGE_EXPIRED', async () => {
-      ({ ctx, baseUrl } = await setup())
-      mailbox.length = 0
+      ({ ctx, baseUrl, mailbox } = await setup())
       const step1 = await fetch(`${baseUrl}/sso/sessions/mail`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -283,6 +297,77 @@ describe('@cordisjs/plugin-sso-server', () => {
       })
       expect(first.status).to.equal(200)
       const second = await fetch(`${baseUrl}/sso/sessions/mail`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body,
+      })
+      expect(second.status).to.equal(401)
+      expect(await second.json()).to.deep.equal({ error: 'CHALLENGE_EXPIRED' })
+    })
+  })
+
+  describe('POST /sso/sessions/sms (challenge → finish)', () => {
+    it('unknown phone jitProvisionings in one flow', async () => {
+      ({ ctx, baseUrl, smsbox } = await setup())
+      const step1 = await fetch(`${baseUrl}/sso/sessions/sms`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ phone: '+8613800138000' }),
+      })
+      expect(step1.status).to.equal(200)
+      const body1 = await step1.json() as any
+      expect(body1.phase).to.equal('challenge')
+      expect(body1.challengeId).to.be.a('string')
+      expect(body1.response.shape).to.equal('code')
+      const sent = smsbox[0]
+      expect(sent.phone).to.equal('+8613800138000')
+      const step2 = await fetch(`${baseUrl}/sso/sessions/sms`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ challengeId: body1.challengeId, code: sent.code }),
+      })
+      expect(step2.status).to.equal(200)
+      const body2 = await step2.json() as any
+      expect(body2.phase).to.equal('finish')
+      expect(body2.token).to.be.a('string')
+      expect(await ctx.database.get('sso.sms' as any, { phone: '+8613800138000' })).to.have.length(1)
+    })
+
+    it('wrong code → VERIFICATION_FAILED (pending not consumed)', async () => {
+      ({ ctx, baseUrl, smsbox } = await setup())
+      const step1 = await fetch(`${baseUrl}/sso/sessions/sms`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ phone: '+8613900139000' }),
+      })
+      const body1 = await step1.json() as any
+      const bad = await fetch(`${baseUrl}/sso/sessions/sms`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ challengeId: body1.challengeId, code: 'wrong!' }),
+      })
+      expect(bad.status).to.equal(401)
+      expect(await bad.json()).to.deep.equal({ error: 'VERIFICATION_FAILED' })
+      const good = await fetch(`${baseUrl}/sso/sessions/sms`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ challengeId: body1.challengeId, code: smsbox[0].code }),
+      })
+      expect(good.status).to.equal(200)
+    })
+
+    it('replayed challengeId → CHALLENGE_EXPIRED', async () => {
+      ({ ctx, baseUrl, smsbox } = await setup())
+      const step1 = await fetch(`${baseUrl}/sso/sessions/sms`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ phone: '+8613700137000' }),
+      })
+      const body1 = await step1.json() as any
+      const body = JSON.stringify({ challengeId: body1.challengeId, code: smsbox[0].code })
+      const first = await fetch(`${baseUrl}/sso/sessions/sms`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body,
+      })
+      expect(first.status).to.equal(200)
+      const second = await fetch(`${baseUrl}/sso/sessions/sms`, {
         method: 'POST', headers: { 'content-type': 'application/json' }, body,
       })
       expect(second.status).to.equal(401)
@@ -426,10 +511,9 @@ describe('@cordisjs/plugin-sso-server', () => {
     })
 
     it('POST /sso/identities/mail requires a valid challenge', async () => {
-      ({ ctx, baseUrl } = await setup())
+      ({ ctx, baseUrl, mailbox } = await setup())
       const { userId } = await registerPasswordUser(baseUrl, 'alice', 'longenough')
       const token = await loginAndGetToken(baseUrl, 'alice', 'longenough')
-      mailbox.length = 0
       const step1 = await fetch(`${baseUrl}/sso/identities/mail`, {
         method: 'POST',
         headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
@@ -442,6 +526,29 @@ describe('@cordisjs/plugin-sso-server', () => {
         method: 'POST',
         headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
         body: JSON.stringify({ challengeId: body1.challengeId, code: mailbox[0].code }),
+      })
+      expect(step2.status).to.equal(200)
+      const body2 = await step2.json() as any
+      expect(body2.phase).to.equal('finish')
+      expect(await ctx.sso.getIdentities(userId)).to.have.length(2)
+    })
+
+    it('POST /sso/identities/sms requires a valid challenge', async () => {
+      ({ ctx, baseUrl, smsbox } = await setup())
+      const { userId } = await registerPasswordUser(baseUrl, 'alice', 'longenough')
+      const token = await loginAndGetToken(baseUrl, 'alice', 'longenough')
+      const step1 = await fetch(`${baseUrl}/sso/identities/sms`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ phone: '+8613600136000' }),
+      })
+      expect(step1.status).to.equal(200)
+      const body1 = await step1.json() as any
+      expect(body1.phase).to.equal('challenge')
+      const step2 = await fetch(`${baseUrl}/sso/identities/sms`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ challengeId: body1.challengeId, code: smsbox[0].code }),
       })
       expect(step2.status).to.equal(200)
       const body2 = await step2.json() as any

@@ -3,6 +3,7 @@ import type {} from '@cordisjs/plugin-database'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Sso } from '@cordisjs/plugin-sso'
 import type { Request } from '@cordisjs/plugin-server'
+import z from 'schemastery'
 
 declare module '@cordisjs/plugin-database' {
   interface Tables {
@@ -47,6 +48,12 @@ export interface Config {
   codeLifetime?: number
   refreshTokenLifetime?: number
 }
+
+export const Config: z<Config> = z.object({
+  tokenLifetime: z.natural().default(3600).description('access token 有效期（秒）。'),
+  codeLifetime: z.natural().default(600).description('授权码有效期（秒）。'),
+  refreshTokenLifetime: z.natural().default(30 * 24 * 3600).description('refresh token 有效期（秒）。'),
+})
 
 export const name = 'server-oauth'
 export const inject = ['sso', 'server', 'model']

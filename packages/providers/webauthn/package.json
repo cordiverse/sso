@@ -36,6 +36,7 @@
     "nid-webauthn-emulator": "^0.2.11"
   },
   "dependencies": {
-    "@simplewebauthn/server": "^13.3.0"
+    "@simplewebauthn/server": "^13.3.0",
+    "schemastery": "^3.18.0"
   }
 }

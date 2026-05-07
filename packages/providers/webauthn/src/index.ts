@@ -13,6 +13,7 @@ import { ChallengeProvider, Sso, ssoError } from '@cordisjs/plugin-sso'
 import type { Database } from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-server'
 import type {} from '@cordisjs/plugin-timer'
+import z from 'schemastery'
 
 declare module '@cordisjs/plugin-database' {
   interface Tables {
@@ -79,6 +80,13 @@ type WebauthnExtra =
 
 @Inject('server')
 export default class WebAuthnProvider extends ChallengeProvider<WebauthnInit, WebauthnComplete, WebauthnExtra> {
+  static Config: z<Config> = z.object({
+    rpName: z.string().default('Cordis').description('Relying Party 名称（用户在认证器中看到的站点名）。'),
+    rpId: z.string().description('Relying Party ID，默认取自 ctx.server.baseUrl 的 hostname。'),
+    origin: z.string().description('期望的 origin，默认取自 ctx.server.baseUrl。'),
+    timeout: z.natural().default(60000).description('认证流程超时时间（毫秒）。'),
+  })
+
   name = 'webauthn'
   canBePrimary = true
   canStepUp = true

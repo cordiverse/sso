@@ -3,6 +3,7 @@ import { createHmac, randomBytes, randomUUID } from 'node:crypto'
 import type { Database } from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-timer'
 import { ChallengeProvider, Sso, ssoError } from '@cordisjs/plugin-sso'
+import z from 'schemastery'
 
 declare module '@cordisjs/plugin-database' {
   interface Tables {
@@ -91,6 +92,19 @@ interface TotpExtra {
 }
 
 export default class TotpProvider extends ChallengeProvider<TotpInit, TotpComplete, TotpExtra> {
+  static Config: z<Config> = z.object({
+    issuer: z.string().default('Cordis').description('otpauth URL 中的 issuer 字段。'),
+    period: z.natural().default(30).description('时间步长（秒）。'),
+    digits: z.natural().default(6).description('验证码位数。'),
+    algorithm: z.union([
+      z.const('sha1').required(),
+      z.const('sha256').required(),
+      z.const('sha512').required(),
+    ] as const).default('sha1').description('HMAC 算法。'),
+    window: z.natural().default(1).description('允许的时间步长偏移数，用于对抗时钟漂移。'),
+    challengeTtl: z.natural().description('绑定流程中秘钥挑战的存活时间（毫秒）。'),
+  })
+
   name = 'totp'
   canBePrimary = false
   canStepUp = true

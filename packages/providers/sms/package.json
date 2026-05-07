@@ -23,17 +23,18 @@
     "@cordisjs/plugin-database": "^4.0.1",
     "@cordisjs/plugin-sso": "^0.2.0",
     "@cordisjs/plugin-timer": "^1.1.1",
-    "@cordisjs/sms": "^0.1.0",
+    "@cordisjs/sms": "^0.2.0",
     "cordis": "^4.0.0-rc.4"
   },
   "devDependencies": {
     "@cordisjs/plugin-database": "^4.0.1",
     "@cordisjs/plugin-sso": "^0.2.0",
     "@cordisjs/plugin-timer": "^1.1.1",
-    "@cordisjs/sms": "^0.1.0",
+    "@cordisjs/sms": "^0.2.0",
     "cordis": "^4.0.0-rc.4"
   },
   "dependencies": {
-    "cosmokit": "^1.8.1"
+    "cosmokit": "^1.8.1",
+    "schemastery": "^3.18.0"
   }
 }
