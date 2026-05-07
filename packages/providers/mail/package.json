@@ -1,6 +1,6 @@
 {
   "name": "@cordisjs/plugin-sso-mail",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Email OTP provider for SSO",
   "type": "module",
   "main": "lib/index.js",
@@ -22,14 +22,14 @@
   "peerDependencies": {
     "@cordisjs/mail": "^0.2.0",
     "@cordisjs/plugin-database": "^4.0.1",
-    "@cordisjs/plugin-sso": "^0.2.0",
+    "@cordisjs/plugin-sso": "^0.2.1",
     "@cordisjs/plugin-timer": "^1.1.1",
     "cordis": "^4.0.0-rc.4"
   },
   "devDependencies": {
     "@cordisjs/mail": "^0.2.0",
     "@cordisjs/plugin-database": "^4.0.1",
-    "@cordisjs/plugin-sso": "^0.2.0",
+    "@cordisjs/plugin-sso": "^0.2.1",
     "@cordisjs/plugin-timer": "^1.1.1",
     "cordis": "^4.0.0-rc.4"
   },

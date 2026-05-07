@@ -1,6 +1,6 @@
 {
   "name": "@cordisjs/plugin-sso-webauthn",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "WebAuthn/FIDO2 device authentication provider for SSO",
   "type": "module",
   "main": "lib/index.js",
@@ -22,7 +22,7 @@
   "peerDependencies": {
     "@cordisjs/plugin-database": "^4.0.1",
     "@cordisjs/plugin-server": "^1.6.1",
-    "@cordisjs/plugin-sso": "^0.2.0",
+    "@cordisjs/plugin-sso": "^0.2.1",
     "@cordisjs/plugin-timer": "^1.1.1",
     "cordis": "^4.0.0-rc.4"
   },
@@ -30,7 +30,7 @@
     "@cordisjs/plugin-database": "^4.0.1",
     "@cordisjs/plugin-database-memory": "^4.0.0",
     "@cordisjs/plugin-server": "^1.6.1",
-    "@cordisjs/plugin-sso": "^0.2.0",
+    "@cordisjs/plugin-sso": "^0.2.1",
     "@cordisjs/plugin-timer": "^1.1.1",
     "cordis": "^4.0.0-rc.4",
     "nid-webauthn-emulator": "^0.2.11"

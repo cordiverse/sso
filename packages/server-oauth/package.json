@@ -1,6 +1,6 @@
 {
   "name": "@cordisjs/plugin-server-oauth",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "OAuth 2.0 Authorization Server for Cordis",
   "type": "module",
   "main": "lib/index.js",
@@ -22,13 +22,13 @@
   "peerDependencies": {
     "@cordisjs/plugin-database": "^4.0.1",
     "@cordisjs/plugin-server": "^1.6.1",
-    "@cordisjs/plugin-sso": "^0.2.0",
+    "@cordisjs/plugin-sso": "^0.2.1",
     "cordis": "^4.0.0-rc.4"
   },
   "devDependencies": {
     "@cordisjs/plugin-database": "^4.0.1",
     "@cordisjs/plugin-server": "^1.6.1",
-    "@cordisjs/plugin-sso": "^0.2.0",
+    "@cordisjs/plugin-sso": "^0.2.1",
     "cordis": "^4.0.0-rc.4"
   },
   "dependencies": {
