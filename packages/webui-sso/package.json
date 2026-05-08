@@ -1,7 +1,7 @@
 {
   "name": "@cordisjs/plugin-webui-sso",
   "description": "SSO login / register / account management for the Cordis webui console",
-  "version": "0.2.3",
+  "version": "0.2.5",
   "type": "module",
   "main": "lib/index.js",
   "files": [
@@ -44,15 +44,15 @@
     }
   },
   "peerDependencies": {
-    "@cordisjs/plugin-webui": "^0.6.3",
+    "@cordisjs/plugin-webui": "^0.8.0",
     "cordis": "^4.0.0-rc.4"
   },
   "dependencies": {
     "schemastery": "^3.18.0"
   },
   "devDependencies": {
-    "@cordisjs/client": "^0.6.3",
-    "@cordisjs/plugin-webui": "^0.6.3",
+    "@cordisjs/client": "^0.8.0",
+    "@cordisjs/plugin-webui": "^0.8.0",
     "@simplewebauthn/browser": "^13.1.0",
     "@types/qrcode": "^1.5.5",
     "cordis": "^4.0.0-rc.4",

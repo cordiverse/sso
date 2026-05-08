@@ -19,10 +19,10 @@ interface Data {
 
 export function apply(ctx: Context) {
   const entry = ctx.webui.addEntry<Data>({
-    path: '@cordisjs/plugin-webui-sso/dist',
-    base: import.meta.url,
-    dev: '../client/index.ts',
-    prod: '../dist/manifest.json',
+    baseUrl: import.meta.url,
+    source: '../client/index.ts',
+    manifest: '../dist/manifest.json',
+    routes: ['/sso'],
   }, { providers: [] })
 
   async function refresh() {

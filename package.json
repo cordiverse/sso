@@ -20,7 +20,7 @@
     "test:html": "shx rm -rf coverage && yarn test --coverage --coverage.reporter html"
   },
   "devDependencies": {
-    "@cordisjs/client": "^0.6.3",
+    "@cordisjs/client": "^0.8.0",
     "@cordisjs/eslint-config": "^1.1.1",
     "@cordisjs/unyaml": "^2.0.3",
     "@types/node": "^25.3.5",
