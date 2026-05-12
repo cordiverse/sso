@@ -1,7 +1,7 @@
 import { Context } from 'cordis'
 import Database from '@cordisjs/plugin-database'
 import MemoryDriver from '@cordisjs/plugin-database-memory'
-import Logger from '@cordisjs/plugin-logger'
+import LoggerConsole from '@cordisjs/plugin-logger-console'
 import Timer from '@cordisjs/plugin-timer'
 import Sso from '@cordisjs/plugin-sso'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -46,7 +46,7 @@ async function setup(config: TotpConfig = {}) {
   const ctx = new Context()
   await ctx.plugin(Database)
   await ctx.plugin(MemoryDriver)
-  await ctx.plugin(Logger)
+  await ctx.plugin(LoggerConsole)
   await ctx.plugin(Timer)
   await ctx.plugin(Sso)
   await ctx.plugin(Totp, config)

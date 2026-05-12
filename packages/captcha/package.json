@@ -1,6 +1,6 @@
 {
   "name": "@cordisjs/plugin-sso-captcha",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "CAPTCHA verification for SSO (reCAPTCHA, hCaptcha, Turnstile)",
   "type": "module",
   "main": "lib/index.js",
@@ -20,12 +20,12 @@
   },
   "homepage": "https://github.com/cordiverse/sso",
   "peerDependencies": {
-    "@cordisjs/plugin-sso": "^0.2.1",
-    "cordis": "^4.0.0-rc.4"
+    "@cordisjs/plugin-sso": "^0.2.2",
+    "cordis": "^4.0.0-rc.5"
   },
   "devDependencies": {
-    "@cordisjs/plugin-sso": "^0.2.1",
-    "cordis": "^4.0.0-rc.4"
+    "@cordisjs/plugin-sso": "^0.2.2",
+    "cordis": "^4.0.0-rc.5"
   },
   "dependencies": {
     "schemastery": "^3.18.0"

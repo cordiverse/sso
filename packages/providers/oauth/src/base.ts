@@ -1,7 +1,6 @@
 import { Context, Inject, Service } from 'cordis'
 import type { Database } from '@cordisjs/plugin-database'
 import type { Request } from '@cordisjs/plugin-server'
-import type {} from '@cordisjs/plugin-logger'
 import { RedirectProvider, Sso, ssoError } from '@cordisjs/plugin-sso'
 import { callbackResponse, handleOAuthCallback, PkceEntry, PkceStore, StateEntry, StateStore } from './utils'
 import z from 'schemastery'

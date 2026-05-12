@@ -2,7 +2,6 @@ import { Context, Inject, Service } from 'cordis'
 import type { Awaitable } from 'cosmokit'
 import type { Database } from '@cordisjs/plugin-database'
 import type {} from '@cordisjs/plugin-timer'
-import type {} from '@cordisjs/plugin-logger'
 import { randomUUID } from 'node:crypto'
 import z from 'schemastery'
 
@@ -56,7 +55,6 @@ export function ssoError(status: number, code: string): Error {
 }
 
 @Inject('sso')
-@Inject('logger')
 @Inject('database')
 export abstract class SsoProvider {
   abstract name: string

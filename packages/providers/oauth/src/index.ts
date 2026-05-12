@@ -1,5 +1,4 @@
 import { Context } from 'cordis'
-import type {} from '@cordisjs/plugin-logger'
 import type {} from '@cordisjs/plugin-server'
 import type {} from '@cordisjs/plugin-timer'
 import type {} from '@cordisjs/plugin-database'

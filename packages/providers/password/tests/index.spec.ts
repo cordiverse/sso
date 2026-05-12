@@ -1,5 +1,5 @@
 import { Context } from 'cordis'
-import Logger from '@cordisjs/plugin-logger'
+import LoggerConsole from '@cordisjs/plugin-logger-console'
 import Database from '@cordisjs/plugin-database'
 import MemoryDriver from '@cordisjs/plugin-database-memory'
 import Sso from '@cordisjs/plugin-sso'
@@ -8,7 +8,7 @@ import Password from '../src'
 
 async function setup(config: Password.Config = {}) {
   const ctx = new Context()
-  await ctx.plugin(Logger)
+  await ctx.plugin(LoggerConsole)
   await ctx.plugin(Database)
   await ctx.plugin(MemoryDriver)
   await ctx.plugin(Sso)

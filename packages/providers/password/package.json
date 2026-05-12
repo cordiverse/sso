@@ -1,6 +1,6 @@
 {
   "name": "@cordisjs/plugin-sso-password",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Password authentication provider for SSO",
   "type": "module",
   "main": "lib/index.js",
@@ -20,15 +20,15 @@
   },
   "homepage": "https://github.com/cordiverse/sso",
   "peerDependencies": {
-    "@cordisjs/plugin-database": "^4.0.1",
-    "@cordisjs/plugin-sso": "^0.2.1",
-    "cordis": "^4.0.0-rc.4"
+    "@cordisjs/plugin-database": "^4.0.2",
+    "@cordisjs/plugin-sso": "^0.2.2",
+    "cordis": "^4.0.0-rc.5"
   },
   "devDependencies": {
-    "@cordisjs/plugin-database": "^4.0.1",
-    "@cordisjs/plugin-database-memory": "^4.0.0",
-    "@cordisjs/plugin-sso": "^0.2.1",
-    "cordis": "^4.0.0-rc.4"
+    "@cordisjs/plugin-database": "^4.0.2",
+    "@cordisjs/plugin-database-memory": "^4.0.1",
+    "@cordisjs/plugin-sso": "^0.2.2",
+    "cordis": "^4.0.0-rc.5"
   },
   "dependencies": {
     "schemastery": "^3.18.0"
