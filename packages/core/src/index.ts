@@ -26,8 +26,8 @@ declare module '@cordisjs/plugin-database' {
 
 export interface User {
   id: number
-  name?: string
-  display?: string
+  name?: string | null
+  display?: string | null
   createdAt: Date
   updatedAt: Date
 }
@@ -347,8 +347,8 @@ export class Sso extends Service {
 
     ctx.database.extend('sso.user', {
       id: 'unsigned(8)',
-      name: 'string(255)',
-      display: 'string(255)',
+      name: { type: 'string', length: 255, nullable: true },
+      display: { type: 'string', length: 255, nullable: true },
       createdAt: 'timestamp',
       updatedAt: 'timestamp',
     }, { autoInc: true, unique: [['name']] })
