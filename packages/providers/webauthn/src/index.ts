@@ -151,7 +151,7 @@ export default class WebAuthnProvider extends ChallengeProvider<WebauthnInit, We
       let displayName = input?.displayName
       if (ctx.userId && (!userName || !displayName)) {
         const [owner] = await this.ctx.database.get('sso.user', { id: ctx.userId })
-        userName = userName ?? owner?.name ?? owner?.display
+        userName = userName ?? owner?.name ?? owner?.display ?? undefined
         displayName = displayName ?? owner?.display ?? owner?.name ?? userName
       }
       userName = userName ?? 'User'

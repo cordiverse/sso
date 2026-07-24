@@ -44,18 +44,18 @@
     }
   },
   "peerDependencies": {
-    "@cordisjs/plugin-webui": "^0.8.1",
-    "cordis": "^4.0.0-rc.5"
+    "@cordisjs/plugin-webui": "^0.8.2",
+    "cordis": "^4.0.0-rc.7"
   },
   "dependencies": {
     "schemastery": "^3.18.0"
   },
   "devDependencies": {
-    "@cordisjs/client": "^0.8.1",
-    "@cordisjs/plugin-webui": "^0.8.1",
+    "@cordisjs/client": "^0.8.2",
+    "@cordisjs/plugin-webui": "^0.8.2",
     "@simplewebauthn/browser": "^13.1.0",
     "@types/qrcode": "^1.5.5",
-    "cordis": "^4.0.0-rc.5",
+    "cordis": "^4.0.0-rc.7",
     "qrcode": "^1.5.4"
   }
 }

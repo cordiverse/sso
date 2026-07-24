@@ -144,7 +144,7 @@ export default class TotpProvider extends ChallengeProvider<TotpInit, TotpComple
       let accountName: string | undefined = input?.label
       if (!accountName && ctx.userId) {
         const [owner] = await this.ctx.database.get('sso.user', { id: ctx.userId })
-        accountName = owner?.name ?? owner?.display
+        accountName = owner?.name ?? owner?.display ?? undefined
       }
       accountName = accountName ?? 'User'
       const otpauthUrl =
